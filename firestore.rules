@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// Admin-only database. Client gateways never read Firestore — they only call
+// the licenseCheck endpoint, which runs with server credentials.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Client registry: readable/writable by authenticated admins only.
+    match /clients/{clientId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Admin roster: managed from the Firebase console, never from the app.
+    match /admins/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
