@@ -1,57 +1,105 @@
 import {
   Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Paper, Typography, Chip,
+  Paper, Typography, Chip, Alert,
 } from '@mui/material';
-import type { GatewaySpareAlert } from '../types';
+import type { GatewaySpareRow } from '../types';
 import { formatRunHours } from '../utils/unitConverters';
 
+const IMPELLER_COUNT = 10;
+
 interface Props {
-  alerts: GatewaySpareAlert[];
+  spareGrid: GatewaySpareRow[];
+  spareAlerts: GatewaySpareRow[];
 }
 
 /**
- * Mirrors the client dashboard's spare-health table styling. The admin API
- * only exposes ACTIVE alerts (not the full grid), so each row is one alert.
+ * Full spare-health grid — mirrors the client dashboard's 10×14 table, fed by
+ * the live snapshot's `spareGrid[]` (140 rows). Triggered cells are highlighted
+ * exactly as on the local dashboard. `spareAlerts[]` is surfaced as a summary
+ * banner above the grid.
  */
-export default function SpareHealthTable({ alerts }: Props) {
+export default function SpareHealthTable({ spareGrid, spareAlerts }: Props) {
+  // Preserve gateway ordering (by impellerNum, spareIndex) to derive the row set.
+  const spareNames = Array.from(
+    new Map(
+      [...spareGrid]
+        .sort((a, b) => a.spareIndex - b.spareIndex)
+        .map(r => [r.spareName, r.spareIndex] as const)
+    ).keys()
+  );
+  const impellers = Array.from({ length: IMPELLER_COUNT }, (_, i) => i + 1);
+  const cell = (imp: number, spare: string) =>
+    spareGrid.find(r => r.impellerNum === imp && r.spareName === spare);
+
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 2 }}>Spare Parts Health</Typography>
 
-      {alerts.length === 0 ? (
-        <Typography color="text.secondary" variant="body2">
-          No active spare alerts.
-        </Typography>
+      {spareAlerts.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
+          {spareAlerts.length} active maintenance alert{spareAlerts.length === 1 ? '' : 's'}:{' '}
+          {spareAlerts
+            .map(a => `Imp ${a.impellerNum} ${a.spareName} (${formatRunHours(a.currentRunHours)}/${formatRunHours(a.thresholdHours)})`)
+            .join(', ')}
+        </Alert>
+      )}
+
+      {spareGrid.length === 0 ? (
+        <Typography color="text.secondary" variant="body2">No spare-health data reported.</Typography>
       ) : (
         <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
           <Table size="small" stickyHeader>
             <TableHead>
               <TableRow>
                 <TableCell sx={{ fontWeight: 700, minWidth: 150 }}>Spare Part</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 700, minWidth: 110 }}>Impeller</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 700, minWidth: 110 }}>Run Hours</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 700, minWidth: 110 }}>Threshold</TableCell>
-                <TableCell align="center" sx={{ fontWeight: 700, minWidth: 110 }}>Status</TableCell>
+                {impellers.map(i => (
+                  <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: 110 }}>
+                    Imp {i}
+                  </TableCell>
+                ))}
               </TableRow>
             </TableHead>
             <TableBody>
-              {alerts.map((a) => (
-                <TableRow key={`${a.impeller}-${a.spareIndex}`}>
-                  <TableCell sx={{ fontWeight: 600 }}>{a.spareName}</TableCell>
-                  <TableCell align="center">Imp {a.impeller}</TableCell>
-                  <TableCell align="center" sx={{ bgcolor: 'error.light', verticalAlign: 'middle' }}>
-                    <Typography variant="caption" display="block" sx={{ fontWeight: 700, fontSize: '0.72rem' }}>
-                      {formatRunHours(a.runHours)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="center">
-                    <Typography variant="caption" display="block" sx={{ fontSize: '0.72rem' }}>
-                      {formatRunHours(a.thresholdHours)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell align="center">
-                    <Chip label="!" color="error" size="small" sx={{ height: 14, fontSize: 9 }} />
-                  </TableCell>
+              {spareNames.map(spare => (
+                <TableRow key={spare}>
+                  <TableCell sx={{ fontWeight: 600 }}>{spare}</TableCell>
+                  {impellers.map(i => {
+                    const c = cell(i, spare);
+                    if (!c) return <TableCell key={i} align="center">—</TableCell>;
+
+                    const noThreshold = c.thresholdHours === 0;
+                    const triggered = c.triggerActive;
+                    const replaced = c.lastReplacedAt !== null;
+
+                    const runStr = formatRunHours(c.currentRunHours);
+                    const display = noThreshold
+                      ? runStr
+                      : `${runStr} / ${formatRunHours(c.thresholdHours)}`;
+
+                    return (
+                      <TableCell
+                        key={i}
+                        align="center"
+                        sx={{ bgcolor: triggered ? 'error.light' : 'inherit', verticalAlign: 'middle' }}
+                      >
+                        <Typography
+                          variant="caption"
+                          display="block"
+                          sx={{ fontWeight: triggered ? 700 : 400, fontSize: '0.72rem' }}
+                        >
+                          {display}
+                        </Typography>
+                        {triggered && (
+                          <Chip label="!" color="error" size="small"
+                            sx={{ height: 14, fontSize: 9, mt: 0.25 }} />
+                        )}
+                        {replaced && !triggered && (
+                          <Chip label="✓" color="success" size="small"
+                            sx={{ height: 14, fontSize: 9, mt: 0.25 }} />
+                        )}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))}
             </TableBody>

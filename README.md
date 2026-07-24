@@ -30,7 +30,7 @@ Client app ──GET + X-License-Key──► licenseCheck (fn) ──► 200 / 
 ## Firestore model
 
 - `clients/{clientId}` — name, staticIp, port, useTls, hostnameOverride, adminApiKey,
-  licenseKey, licenseExpiresAt, graceDays, suspended, castingMetals[1–4],
+  licenseKey, licenseExpiresAt, graceDays, suspended,
   lastLicenseCheckAt, lastAdminContactAt, lastContactStatus, recentEvents (capped 20).
 - `admins/{uid}` — presence marks a Firebase Auth user as admin. **Created manually in the
   Firebase console; there is no self-signup.**
@@ -95,7 +95,7 @@ First admin: Firebase console → Authentication → Add user, then Firestore �
 
 ## Onboarding a client installation
 
-1. Dashboard → **Add Client**: name, static IP, port, metals, expiry. Keys are generated
+1. Dashboard → **Add Client**: name, static IP, port, expiry. Keys are generated
    automatically; the dialog shows the exact config snippet.
 2. Configure the client installation with:
    - license check URL: `https://asia-south1-<project>.cloudfunctions.net/licenseCheck?clientId=<id>`

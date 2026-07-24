@@ -7,17 +7,19 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
-import { useNavigate, useParams } from 'react-router-dom';
-import MachineStatusTile from '../components/MachineStatusTile';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { MachineStatusTile, PlcLinkTile } from '../components/MachineStatusTile';
 import { LifetimeSection } from '../components/LifetimeSection';
+import AmpsPanel from '../components/AmpsPanel';
 import SpareHealthTable from '../components/SpareHealthTable';
+import Section2View from '../components/Section2View';
 import HistoryGraph from '../components/HistoryGraph';
 import { fetchLive, fetchHistory } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
 import { useClients } from '../contexts/ClientsContext';
 import { PARAM_META } from '../utils/unitConverters';
 import { formatDateTime } from '../utils/formatters';
-import type { GatewayHistoryResponse, GatewayLiveResponse, LicenseStatus } from '../types';
+import type { Client, GatewayHistoryResponse, GatewayLiveResponse, LicenseStatus } from '../types';
 
 const AUTO_REFRESH_MS = 30_000;
 const DEFAULT_HISTORY_LIMIT = 2000;
@@ -41,13 +43,23 @@ const eventChipColor: Record<string, 'success' | 'error' | 'warning' | 'default'
 
 const dateInput = (d: Date) => d.toISOString().split('T')[0];
 
-/** Per-client dashboard — mirrors the client's own dashboard layout, fed by
- *  on-demand pulls through the gateway proxy (nothing cached in the cloud). */
+// Dev-only fixture stub so ?fixture=1 renders the full dashboard with no gateway.
+const fixtureClient = (id: string): Client => ({
+  id, name: 'Fixture Preview', staticIp: 'sample-response.json', port: 0, useTls: false,
+  hostnameOverride: null, adminApiKey: '', licenseKey: '', licenseExpiresAt: new Date(Date.now() + 30 * 864e5),
+  graceDays: 0, suspended: false, lastLicenseCheckAt: null, lastAdminContactAt: null,
+  lastContactStatus: null, recentEvents: [], createdAt: null, updatedAt: null,
+});
+
+/** Per-client dashboard — mirrors the client's own dashboard layout, fed by one
+ *  on-demand pull of the extended /api/admin/live payload (nothing cached). */
 export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const fixtureMode = import.meta.env.DEV && searchParams.get('fixture') === '1';
   const navigate = useNavigate();
   const { clients, loading: clientsLoading } = useClients();
-  const client = clients.find(c => c.id === id) ?? null;
+  const client = clients.find(c => c.id === id) ?? (fixtureMode && id ? fixtureClient(id) : null);
 
   const [live, setLive] = useState<GatewayLiveResponse | null>(null);
   const [pullState, setPullState] = useState<PullState>('idle');
@@ -60,7 +72,7 @@ export const ClientDashboard: React.FC = () => {
   const [metric, setMetric] = useState('');
   const [fromDate, setFromDate] = useState(dateInput(new Date(Date.now() - 7 * 24 * 3_600_000)));
   const [toDate, setToDate] = useState(dateInput(new Date()));
-  const [historyKey, setHistoryKey] = useState(0); // bump to (re)load the graph
+  const [historyKey, setHistoryKey] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState<GatewayHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -70,6 +82,14 @@ export const ClientDashboard: React.FC = () => {
     if (!id) return;
     setPullState('loading');
     try {
+      if (fixtureMode) {
+        const resp = await fetch('/sample-response.json');
+        setLive(await resp.json() as GatewayLiveResponse);
+        setPullState('ok');
+        setPullDetail(null);
+        setLastFetched(new Date());
+        return;
+      }
       const result = await fetchLive(id);
       if (result.ok) {
         setLive(result.data);
@@ -84,7 +104,7 @@ export const ClientDashboard: React.FC = () => {
       setPullState('gateway-error');
       setPullDetail((err as Error).message);
     }
-  }, [id]);
+  }, [id, fixtureMode]);
 
   useEffect(() => {
     void load();
@@ -120,7 +140,7 @@ export const ClientDashboard: React.FC = () => {
     }
   };
 
-  if (clientsLoading) {
+  if (clientsLoading && !fixtureMode) {
     return <Box display="flex" justifyContent="center" py={8}><CircularProgress /></Box>;
   }
 
@@ -137,7 +157,7 @@ export const ClientDashboard: React.FC = () => {
 
   const licenseStatus = licenseStatusOf(client);
   const metricOptions = Array.from(new Set([
-    ...(live?.lifetime.map(p => p.parameter) ?? []),
+    ...(live?.lifetime.map(p => p.parameterName) ?? []),
     ...Object.keys(PARAM_META),
   ]));
 
@@ -159,6 +179,9 @@ export const ClientDashboard: React.FC = () => {
                 size="small"
                 sx={{ borderRadius: 1, fontSize: '0.65rem', fontWeight: 700, ...statusChipSx[licenseStatus] }}
               />
+              {fixtureMode && (
+                <Chip label="FIXTURE" size="small" color="info" variant="outlined" sx={{ borderRadius: 1, fontSize: '0.65rem', fontWeight: 700 }} />
+              )}
             </Box>
             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
               {(client.useTls ? 'https://' : 'http://') + (client.hostnameOverride || client.staticIp) + ':' + client.port}
@@ -210,6 +233,13 @@ export const ClientDashboard: React.FC = () => {
         </Alert>
       )}
 
+      {/* ── PLC-disconnected indicator (contract: show, exactly like local dashboard) ── */}
+      {live && !live.plcConnected && (
+        <Alert severity="warning" sx={{ mb: 3, borderRadius: 3 }}>
+          <strong>PLC disconnected.</strong> The machine is treated as OFF; amps and spare hours below are the last values before disconnect.
+        </Alert>
+      )}
+
       {pullState === 'loading' && !live && (
         <Box display="flex" justifyContent="center" py={8}><CircularProgress /></Box>
       )}
@@ -223,7 +253,7 @@ export const ClientDashboard: React.FC = () => {
         </Paper>
       )}
 
-      {/* ── Section 1 mirror: status tile → lifetime grid → spares ── */}
+      {/* ── Section 1 mirror: status tiles → lifetime → amps → spare grid ── */}
       {live && (
         <>
           <Box
@@ -233,7 +263,8 @@ export const ClientDashboard: React.FC = () => {
               gap: 2,
             }}
           >
-            <MachineStatusTile plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
+            <MachineStatusTile machineStatus={live.machineStatus} />
+            <PlcLinkTile plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
           </Box>
 
           <Divider sx={{ my: 3 }} />
@@ -241,6 +272,7 @@ export const ClientDashboard: React.FC = () => {
           <LifetimeSection
             clientId={client.id}
             lifetime={live.lifetime}
+            shotsBreakdown={live.shotsBreakdown}
             lastFetched={lastFetched}
             loading={pullState === 'loading'}
             onRefresh={() => void load()}
@@ -248,7 +280,18 @@ export const ClientDashboard: React.FC = () => {
 
           <Divider sx={{ my: 3 }} />
 
-          <SpareHealthTable alerts={live.spareAlerts} />
+          <AmpsPanel amps={live.amps} />
+
+          <Divider sx={{ my: 3 }} />
+
+          <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} />
+
+          {live.section2 && (
+            <>
+              <Divider sx={{ my: 3 }} />
+              <Section2View section2={live.section2} />
+            </>
+          )}
 
           <Divider sx={{ my: 3 }} />
         </>
@@ -294,7 +337,7 @@ export const ClientDashboard: React.FC = () => {
             variant="outlined"
             size="small"
             onClick={() => void loadHistory()}
-            disabled={!metric.trim() || historyLoading}
+            disabled={!metric.trim() || historyLoading || fixtureMode}
             sx={{ borderRadius: 2, fontWeight: 700 }}
           >
             {historyLoading ? 'Loading…' : 'Load'}
@@ -307,6 +350,12 @@ export const ClientDashboard: React.FC = () => {
             </Tooltip>
           )}
         </Box>
+
+        {fixtureMode && (
+          <Alert severity="info" sx={{ mb: 2, borderRadius: 3 }}>
+            History is a separate live query and is disabled in fixture preview.
+          </Alert>
+        )}
 
         {historyError && <Alert severity="error" sx={{ mb: 2, borderRadius: 3 }}>{historyError}</Alert>}
 

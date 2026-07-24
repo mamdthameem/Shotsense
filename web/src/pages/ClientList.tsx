@@ -202,7 +202,6 @@ export const ClientList: React.FC = () => {
                                 <TableCell sx={{ fontWeight: 700, color: (theme) => theme.palette.text.secondary, fontSize: '0.75rem' }}>LICENSE</TableCell>
                                 <TableCell sx={{ fontWeight: 700, color: (theme) => theme.palette.text.secondary, fontSize: '0.75rem' }}>EXPIRY</TableCell>
                                 <TableCell sx={{ fontWeight: 700, color: (theme) => theme.palette.text.secondary, fontSize: '0.75rem' }}>LAST CHECK-IN</TableCell>
-                                <TableCell sx={{ fontWeight: 700, color: (theme) => theme.palette.text.secondary, fontSize: '0.75rem' }}>METALS</TableCell>
                                 <TableCell sx={{ fontWeight: 700, color: (theme) => theme.palette.text.secondary, fontSize: '0.75rem' }} align="right">ACTIONS</TableCell>
                             </TableRow>
                         </TableHead>
@@ -251,9 +250,6 @@ export const ClientList: React.FC = () => {
                                                 </Tooltip>
                                             )}
                                         </TableCell>
-                                        <TableCell sx={{ color: (theme) => theme.palette.text.secondary, fontSize: '0.85rem' }}>
-                                            {c.castingMetals.length > 0 ? c.castingMetals.join(', ') : '—'}
-                                        </TableCell>
                                         <TableCell align="right">
                                             <IconButton
                                                 size="small"
@@ -277,7 +273,7 @@ export const ClientList: React.FC = () => {
                             })}
                             {visibleClients.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={7} align="center" sx={{ py: 6, color: (theme) => theme.palette.text.secondary }}>
+                                    <TableCell colSpan={6} align="center" sx={{ py: 6, color: (theme) => theme.palette.text.secondary }}>
                                         {clients.length === 0 ? 'No clients yet. Add the first one to get started.' : 'No clients match the search.'}
                                     </TableCell>
                                 </TableRow>

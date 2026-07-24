@@ -40,7 +40,6 @@ interface FormState {
     licenseExpiresAt: string; // yyyy-mm-dd
     graceDays: string;
     suspended: boolean;
-    castingMetals: string[]; // always 4 slots
 }
 
 const emptyForm = (): FormState => ({
@@ -54,7 +53,6 @@ const emptyForm = (): FormState => ({
     licenseExpiresAt: '',
     graceDays: '0',
     suspended: false,
-    castingMetals: ['', '', '', ''],
 });
 
 const fromClient = (c: Client): FormState => ({
@@ -68,7 +66,6 @@ const fromClient = (c: Client): FormState => ({
     licenseExpiresAt: c.licenseExpiresAt ? c.licenseExpiresAt.toISOString().split('T')[0] : '',
     graceDays: String(c.graceDays ?? 0),
     suspended: c.suspended,
-    castingMetals: [0, 1, 2, 3].map(i => c.castingMetals[i] ?? ''),
 });
 
 /** Add/Edit client dialog — registry fields, keys, and the config snippet the
@@ -91,13 +88,6 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
 
     const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
         setForm(prev => ({ ...prev, [key]: value }));
-
-    const setMetal = (index: number, value: string) =>
-        setForm(prev => {
-            const metals = [...prev.castingMetals];
-            metals[index] = value;
-            return { ...prev, castingMetals: metals };
-        });
 
     const copy = (value: string) => {
         void navigator.clipboard.writeText(value);
@@ -124,7 +114,6 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
             licenseExpiresAt: new Date(form.licenseExpiresAt),
             graceDays: Math.max(0, parseInt(form.graceDays, 10) || 0),
             suspended: form.suspended,
-            castingMetals: form.castingMetals.map(m => m.trim()).filter(Boolean),
         };
         setSaving(true);
         setError(null);
@@ -147,8 +136,9 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
             label={label}
             fullWidth
             value={form[key]}
+            onChange={(e) => set(key, e.target.value)}
+            helperText="Auto-generated. Paste a specific value to match an existing installation (e.g. mock-api-key for local testing)."
             InputProps={{
-                readOnly: true,
                 sx: { fontFamily: 'var(--font-mono)', fontSize: '0.78rem' },
                 endAdornment: (
                     <InputAdornment position="end">
@@ -268,22 +258,6 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                         label="Suspended (blocks license checks immediately)"
                         sx={{ '& .MuiTypography-root': { fontWeight: 700, fontSize: '0.9rem' } }}
                     />
-
-                    <Divider />
-
-                    <Box>
-                        <Typography variant="subtitle2" fontWeight={700} mb={2}>Casting Metals</Typography>
-                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                            {form.castingMetals.map((metal, i) => (
-                                <TextField
-                                    key={i}
-                                    label={`Casting Metal ${i + 1}`}
-                                    value={metal}
-                                    onChange={(e) => setMetal(i, e.target.value)}
-                                />
-                            ))}
-                        </Box>
-                    </Box>
 
                     <Divider />
 

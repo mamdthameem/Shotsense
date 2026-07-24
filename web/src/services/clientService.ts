@@ -31,7 +31,6 @@ const fromSnapshot = (id: string, data: Record<string, unknown>): Client => ({
   licenseExpiresAt: toDateOrNull(data.licenseExpiresAt),
   graceDays: (data.graceDays as number) ?? 0,
   suspended: (data.suspended as boolean) ?? false,
-  castingMetals: (data.castingMetals as string[]) ?? [],
   lastLicenseCheckAt: toDateOrNull(data.lastLicenseCheckAt),
   lastAdminContactAt: toDateOrNull(data.lastAdminContactAt),
   lastContactStatus: (data.lastContactStatus as ContactStatus | null) ?? null,
@@ -64,7 +63,6 @@ export interface ClientInput {
   licenseExpiresAt: Date | null;
   graceDays: number;
   suspended: boolean;
-  castingMetals: string[];
 }
 
 const inputToDoc = (input: ClientInput) => ({
