@@ -22,6 +22,7 @@ export const PARAM_META: Record<string, ParamMeta> = {
   avg_shot_refill_time_sec:  { label: 'Avg Shot Refill Time',  unit: 's' },
   last_refill_epoch_sec:     { label: 'Last Shot Refill',      isEpochSeconds: true },
   effective_shots_usage:     { label: 'Effective Shots Usage', unit: 'kg/T', lowerIsBetter: true },
+  effective_shots_usage_kg_per_ton: { label: 'Effective Shots Usage', unit: 'kg/T', lowerIsBetter: true },
 };
 
 /** The gateway's value text (or JSON number) plus its unit, untouched. Missing or "" shows as "—". */

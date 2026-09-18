@@ -1,5 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { normalizeLive, normalizeSection2, normalizeTrends } from '../utils/normalize';
 import type {
   GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
   GatewaySection2, GatewayTrendPoint, GatewayTrendsQuery, ProxyResult,
@@ -45,8 +46,8 @@ const filterProxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions,
 
 /** One on-demand pull of the client's live snapshot — nothing is cached. */
 export async function fetchLive(clientId: string): Promise<ProxyResult<GatewayLiveResponse>> {
-  const result = await proxy({ clientId, view: 'live' });
-  return result.data as ProxyResult<GatewayLiveResponse>;
+  const result = (await proxy({ clientId, view: 'live' })).data as ProxyResult<GatewayLiveResponse>;
+  return result.ok ? { ok: true, data: normalizeLive(result.data) } : result;
 }
 
 export async function fetchHistory(
@@ -75,8 +76,8 @@ export async function fetchTrends(
   clientId: string,
   trendsQuery: GatewayTrendsQuery = {}
 ): Promise<ProxyResult<GatewayTrendPoint[]>> {
-  const result = await proxy({ clientId, view: 'trends', trendsQuery });
-  return result.data as ProxyResult<GatewayTrendPoint[]>;
+  const result = (await proxy({ clientId, view: 'trends', trendsQuery })).data as ProxyResult<GatewayTrendPoint[]>;
+  return result.ok ? { ok: true, data: normalizeTrends(result.data) } : result;
 }
 
 /** Cloud-triggered synchronous filtered calculation (time/cycle/metal) — no polling. */
@@ -84,6 +85,10 @@ export async function fetchFilteredCalculation(
   clientId: string,
   filterBody: GatewayFilterRequest
 ): Promise<ProxyResult<GatewaySection2>> {
-  const result = await filterProxy({ clientId, view: 'filter', filterBody });
-  return result.data as ProxyResult<GatewaySection2>;
+  const result = (await filterProxy({ clientId, view: 'filter', filterBody })).data as ProxyResult<GatewaySection2 | null>;
+  if (!result.ok) return result;
+  const section2 = normalizeSection2(result.data);
+  return section2
+    ? { ok: true, data: section2 }
+    : { ok: false, reason: 'gateway-error', message: 'Gateway returned an empty filter result.' };
 }

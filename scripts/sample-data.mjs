@@ -10,6 +10,11 @@
  *  - trends include empty days as their own zero-valued entries.
  *  - impellers.selected lists the shown impellers; amps and spareGrid only
  *    carry rows for those.
+ * Matched to a real gateway response (2026-09-18):
+ *  - the shots-usage lifetime parameter is named effective_shots_usage_kg_per_ton;
+ *  - section2.results has six entries (adds production_qty_kg);
+ *  - section2 has NO ampsHistory list (the contract lists one). Pass
+ *    { withAmpsHistory: true } to buildSection2 to include it anyway.
  */
 
 export const SPARE_NAMES = [
@@ -58,7 +63,7 @@ function ampValue(imp, t) {
 }
 
 /** Section 2 result for a filter request (or the default "latest" one). */
-export function buildSection2(now, filter = null, requestId = 42, selected = DEFAULT_SELECTED) {
+export function buildSection2(now, filter = null, requestId = 42, selected = DEFAULT_SELECTED, { withAmpsHistory = false } = {}) {
   const f = filter ?? {
     filterBy: 'time', filterStart: iso(now - DAY), filterEnd: iso(now), periodLabel: 'day',
   };
@@ -115,7 +120,7 @@ export function buildSection2(now, filter = null, requestId = 42, selected = DEF
     }
   }
 
-  return {
+  const section2 = {
     requestId,
     filterBy: f.filterBy,
     filterStart: isTime ? f.filterStart : iso(now),
@@ -131,11 +136,13 @@ export function buildSection2(now, filter = null, requestId = 42, selected = DEF
       { parameterName: 'energy_kwh_total', value: '4921.500' },
       { parameterName: 'energy_per_casting_kwh_kg', value: '0.5540' },
       { parameterName: 'machine_utility_pct', value: '68.90' },
+      { parameterName: 'production_qty_kg', value: String(cycles.reduce((kg, c) => kg + c.productionKg, 0).toFixed(2)) },
     ],
     cycles,
     metals,
-    ampsHistory,
   };
+  if (withAmpsHistory) section2.ampsHistory = ampsHistory;
+  return section2;
 }
 
 /** Full GET /api/admin/live payload. */
@@ -153,7 +160,7 @@ export function buildLive(now = Date.now(), { selected = DEFAULT_SELECTED, secti
     { parameterName: 'avg_shot_refill_time_sec', value: '412.5' },
     { parameterName: 'blast_time_sec', value: '5423000.0' },
     { parameterName: 'cycle_count', value: '18342' },
-    { parameterName: 'effective_shots_usage', value: '3.1250' },
+    { parameterName: 'effective_shots_usage_kg_per_ton', value: '3.1250' },
     { parameterName: 'energy_kwh_total', value: '90312.108' },
     { parameterName: 'energy_per_casting_kwh_kg', value: '0.5701' },
     { parameterName: 'last_refill_epoch_sec', value: String(Math.floor((now - 5 * HOUR) / 1000)) },

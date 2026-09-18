@@ -15,10 +15,15 @@ Any change to that controller must update this file and `sample-response.json` i
 > - `section2.shotsBreakdown` was **removed** (top-level `shotsBreakdown` stays).
 > - `/api/admin/trends` now **includes empty days** as their own entries instead of skipping them.
 > - New field **`impellers.selected`** on `/api/admin/live`: the impellers the gateway is set to
->   show. `amps[]` and `spareGrid[]` (and so `spareAlerts[]`, `section2.ampsHistory[]`) only
->   carry rows for those, so they can be shorter than 10 / 140. The cloud assumes it is a list
->   of impeller numbers, e.g. `"impellers": { "selected": [1, 2, 3, 5] }` — confirm against a
->   real response.
+>   show, as a list of numbers, e.g. `"impellers": { "selected": [1, 2, 3, 5] }`. `amps[]` and
+>   `spareGrid[]` (and so `spareAlerts[]`) only carry rows for those, so they can be shorter
+>   than 10 / 140.
+>
+> **Seen in a real gateway response (2026-09-18), differing from the sections below:**
+> - The lifetime parameter is named **`effective_shots_usage_kg_per_ton`** (not `effective_shots_usage`).
+> - `section2.results[]` has **six** entries — it also includes `production_qty_kg`.
+> - `section2` has **no `ampsHistory[]`** at all. The cloud treats every missing list as empty
+>   instead of failing, so it works with or without it.
 
 ---
 

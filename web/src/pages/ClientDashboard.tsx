@@ -14,6 +14,8 @@ import AmpsPanel from '../components/AmpsPanel';
 import SpareHealthTable from '../components/SpareHealthTable';
 import Section2View from '../components/Section2View';
 import FilterBar from '../components/FilterBar';
+import SectionErrorBoundary from '../components/SectionErrorBoundary';
+import { normalizeLive } from '../utils/normalize';
 import HistoryGraph from '../components/HistoryGraph';
 import { fetchLive, fetchHistory, fetchFilteredCalculation, fetchTrends, describeGatewayFailure } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
@@ -99,7 +101,7 @@ export const ClientDashboard: React.FC = () => {
     try {
       if (fixtureMode) {
         const resp = await fetch('/sample-response.json');
-        setLive(await resp.json() as GatewayLiveResponse);
+        setLive(normalizeLive(await resp.json() as GatewayLiveResponse));
         setPullState('ok');
         setPullDetail(null);
         setLastFetched(new Date());
@@ -309,28 +311,38 @@ export const ClientDashboard: React.FC = () => {
               gap: 2,
             }}
           >
-            <MachineStatusTile machineStatus={live.machineStatus} />
-            <PlcLinkTile plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
+            <SectionErrorBoundary name="Machine status" resetKey={live}>
+              <MachineStatusTile machineStatus={live.machineStatus} />
+            </SectionErrorBoundary>
+            <SectionErrorBoundary name="PLC link" resetKey={live}>
+              <PlcLinkTile plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
+            </SectionErrorBoundary>
           </Box>
 
           <Divider sx={{ my: 3 }} />
 
-          <LifetimeSection
-            lifetime={live.lifetime}
-            shotsBreakdown={live.shotsBreakdown}
-            trends={trends}
-            lastFetched={lastFetched}
-            loading={pullState === 'loading'}
-            onRefresh={() => void load()}
-          />
+          <SectionErrorBoundary name="Lifetime parameters" resetKey={live}>
+            <LifetimeSection
+              lifetime={live.lifetime}
+              shotsBreakdown={live.shotsBreakdown}
+              trends={trends}
+              lastFetched={lastFetched}
+              loading={pullState === 'loading'}
+              onRefresh={() => void load()}
+            />
+          </SectionErrorBoundary>
 
           <Divider sx={{ my: 3 }} />
 
-          <AmpsPanel amps={live.amps} selected={live.impellers?.selected} />
+          <SectionErrorBoundary name="Impeller current" resetKey={live}>
+            <AmpsPanel amps={live.amps} selected={live.impellers?.selected} />
+          </SectionErrorBoundary>
 
           <Divider sx={{ my: 3 }} />
 
-          <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} selected={live.impellers?.selected} />
+          <SectionErrorBoundary name="Spare parts health" resetKey={live}>
+            <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} selected={live.impellers?.selected} />
+          </SectionErrorBoundary>
 
           <Divider sx={{ my: 3 }} />
 
@@ -342,7 +354,11 @@ export const ClientDashboard: React.FC = () => {
           )}
           {filterError && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{filterError}</Alert>}
 
-          {section2Data && <Section2View section2={section2Data} />}
+          {section2Data && (
+            <SectionErrorBoundary name="Filtered calculation" resetKey={section2Data}>
+              <Section2View section2={section2Data} />
+            </SectionErrorBoundary>
+          )}
 
           <Divider sx={{ my: 3 }} />
         </>

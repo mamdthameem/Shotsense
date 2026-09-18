@@ -7,6 +7,7 @@ import { UIProvider, useUI } from './contexts/UIContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import SectionErrorBoundary from './components/SectionErrorBoundary';
 import { Login } from './components/Login';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
@@ -30,7 +31,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       >
         <TopBar />
         <Box component="main" sx={{ p: 2, flexGrow: 1, backgroundColor: theme.palette.background.default }}>
-          {children}
+          <SectionErrorBoundary name="This page">{children}</SectionErrorBoundary>
         </Box>
       </Box>
     </Box>
