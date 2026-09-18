@@ -1,10 +1,31 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
-import type { GatewayHistoryResponse, GatewayLiveResponse, ProxyResult } from '../types';
+import type {
+  GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
+  GatewaySection2, GatewayTrendPoint, GatewayTrendsQuery, ProxyResult,
+} from '../types';
+
+const FAILURE_LABELS: Record<GatewayFailureReason, string> = {
+  timeout: 'Gateway request timed out',
+  dns: 'DNS lookup failed',
+  'connection-refused': 'Connection refused',
+  'tls-error': 'TLS/certificate error',
+  unreachable: 'Client unreachable',
+  'auth-failed': 'Gateway rejected the API key',
+  'gateway-error': 'Gateway error',
+};
+
+/** Turns a failed ProxyResult into one clear line for an admin — reason label,
+ *  HTTP status if any, and the specific upstream detail when the proxy has one. */
+export function describeGatewayFailure(result: Extract<ProxyResult<unknown>, { ok: false }>): string {
+  const label = FAILURE_LABELS[result.reason] ?? 'Gateway request failed';
+  const head = result.status ? `${label} (HTTP ${result.status})` : label;
+  return result.message ? `${head} — ${result.message}` : `${head}.`;
+}
 
 interface ProxyRequest {
   clientId: string;
-  view: 'live' | 'history';
+  view: 'live' | 'history' | 'trends' | 'filter';
   query?: {
     metric: string;
     from: string;
@@ -12,6 +33,8 @@ interface ProxyRequest {
     limit?: number;
     offset?: number;
   };
+  trendsQuery?: GatewayTrendsQuery;
+  filterBody?: GatewayFilterRequest;
 }
 
 const proxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy');
@@ -36,4 +59,27 @@ export async function fetchHistory(
     query: { metric, from: from.toISOString(), to: to.toISOString(), limit, offset },
   });
   return result.data as ProxyResult<GatewayHistoryResponse>;
+}
+
+/**
+ * Whole-history graph series for the 4 graphable lifetime parameters.
+ * Fetch once per dashboard load (or its own slow timer) — not on the live
+ * poll cadence, per CONTRACT-admin-api.md (the underlying data changes at
+ * most once a minute server-side).
+ */
+export async function fetchTrends(
+  clientId: string,
+  trendsQuery: GatewayTrendsQuery = {}
+): Promise<ProxyResult<GatewayTrendPoint[]>> {
+  const result = await proxy({ clientId, view: 'trends', trendsQuery });
+  return result.data as ProxyResult<GatewayTrendPoint[]>;
+}
+
+/** Cloud-triggered synchronous filtered calculation (time/cycle/metal) — no polling. */
+export async function fetchFilteredCalculation(
+  clientId: string,
+  filterBody: GatewayFilterRequest
+): Promise<ProxyResult<GatewaySection2>> {
+  const result = await proxy({ clientId, view: 'filter', filterBody });
+  return result.data as ProxyResult<GatewaySection2>;
 }

@@ -38,6 +38,12 @@ export function formatRunHours(val: number): string {
   return `${val.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hrs`;
 }
 
+/** Only "" (never refilled — divide-by-zero) means blank; a real computed 0 renders as 0.0000. */
+export function formatKgPerKg(val: number): string {
+  if (!isFinite(val)) return '—';
+  return `${val.toFixed(4)} kg/kg`;
+}
+
 export const PARAM_META: Record<string, { label: string; unit?: string }> = {
   machine_utility_pct:       { label: 'Machine Utility',      unit: '%' },
   production_qty_kg:         { label: 'Production' },
@@ -47,6 +53,7 @@ export const PARAM_META: Record<string, { label: string; unit?: string }> = {
   cycle_count:               { label: 'Blast Cycles',         unit: 'cycles' },
   avg_shot_refill_time_sec:  { label: 'Avg Shot Refill Time' },
   last_refill_epoch_sec:     { label: 'Last Shot Refill' },
+  effective_shots_usage:     { label: 'Effective Shots Usage', unit: 'kg/kg' },
 };
 
 export function formatParameterValue(name: string, raw: string): string {
@@ -68,6 +75,8 @@ export function formatParameterValue(name: string, raw: string): string {
       return secondsToHoursMin(n);
     case 'last_refill_epoch_sec':
       return epochToLocalDatetime(n);
+    case 'effective_shots_usage':
+      return formatKgPerKg(n);
     default:
       return raw;
   }

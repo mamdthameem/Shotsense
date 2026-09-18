@@ -105,7 +105,17 @@ export interface GatewaySection2Cycle {
   metal4WeightKg: number | null;
   productionKg: number;
   energyKwh: number;
-  shotsUsage: number;
+}
+
+export interface GatewaySection2Metal {
+  metalName: string;       // "unspecified" for a weight declared with a blank name
+  productionKg: number;    // 2 dp
+}
+
+export interface GatewaySection2AmpPoint {
+  parameterName: string;  // Current_imp_1 … Current_imp_10
+  value: string;          // amperes, decimal text
+  timestamp: string;      // when this reading was recorded
 }
 
 export interface GatewaySection2 {
@@ -121,6 +131,8 @@ export interface GatewaySection2 {
   results: GatewaySection2Result[];
   cycles: GatewaySection2Cycle[];
   shotsBreakdown: GatewayShotsBreakdownEntry[];
+  metals: GatewaySection2Metal[];    // ordered by productionKg descending
+  ampsHistory: GatewaySection2AmpPoint[]; // historical impeller current within the filter window
 }
 
 export interface GatewayLiveResponse {
@@ -153,6 +165,47 @@ export interface GatewayHistoryResponse {
   points: GatewayHistoryPoint[];
 }
 
+// POST /api/admin/filter request body — matches CONTRACT-admin-api.md exactly.
+export interface GatewayFilterRequest {
+  filterBy: 'time' | 'cycle' | 'metal';
+  filterStart?: string;    // required when filterBy === 'time'
+  filterEnd?: string;      // required when filterBy === 'time'
+  periodLabel?: string;    // passed through verbatim, purely descriptive
+  filterCycleFrom?: number; // required when filterBy === 'cycle'
+  filterCycleTo?: number;   // required when filterBy === 'cycle'
+  filterMetalName?: string; // required when filterBy === 'metal'
+}
+
+export interface GatewayTrendsQuery {
+  bucket?: 'hour' | 'day' | 'month'; // default 'day'; 'hour' requires start+end
+  start?: string;
+  end?: string;
+}
+
+// GET /api/admin/trends — whole-history rollup for the 4 graphable lifetime
+// params. Fetch once per dashboard load, not on the live poll cadence — the
+// underlying data changes at most once a minute server-side.
+export interface GatewayTrendPoint {
+  day: string;              // bucket start (calendar day, or first-of-month for bucket=month)
+  machineOnSec: number;
+  blastOnSec: number;
+  utilityPct: number;       // rebuilt from summed seconds, not averaged
+  cycleCount: number;
+  productionKg: number;
+  tonnageEnd: number | null;
+  energyKwh: number;
+  efficiencyKwhPerKg: number;
+}
+
+export type GatewayFailureReason =
+  | 'timeout'
+  | 'dns'
+  | 'connection-refused'
+  | 'tls-error'
+  | 'unreachable'
+  | 'auth-failed'
+  | 'gateway-error';
+
 export type ProxyResult<T> =
   | { ok: true; data: T }
-  | { ok: false; reason: 'unreachable' | 'auth-failed' | 'gateway-error'; status?: number };
+  | { ok: false; reason: GatewayFailureReason; status?: number; message?: string };

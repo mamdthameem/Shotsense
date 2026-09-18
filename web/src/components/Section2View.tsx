@@ -9,7 +9,9 @@ import {
 } from 'recharts';
 import ExpandableMetricCard from './ExpandableMetricCard';
 import ShotsBreakdownChart from './ShotsBreakdownChart';
-import type { GatewaySection2, GatewaySection2Cycle } from '../types';
+import AmpsHistoryChart from './AmpsHistoryChart';
+import { PARAM_META, formatParameterValue } from '../utils/unitConverters';
+import type { GatewaySection2, GatewaySection2Cycle, GatewaySection2Metal } from '../types';
 
 function metalCell(name: string | null, weight: number | null): string {
   if (!name) return '—';
@@ -41,6 +43,29 @@ function CyclesChart({ cycles }: { cycles: GatewaySection2Cycle[] }) {
   );
 }
 
+function MetalProductionTable({ metals }: { metals: GatewaySection2Metal[] }) {
+  return (
+    <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 700 }}>Metal</TableCell>
+            <TableCell sx={{ fontWeight: 700 }} align="right">Production (kg)</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {metals.map(m => (
+            <TableRow key={m.metalName}>
+              <TableCell>{m.metalName}</TableCell>
+              <TableCell align="right">{m.productionKg.toFixed(2)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
 function CycleTable({ cycles }: { cycles: GatewaySection2Cycle[] }) {
   return (
     <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto', maxHeight: 420 }}>
@@ -56,7 +81,6 @@ function CycleTable({ cycles }: { cycles: GatewaySection2Cycle[] }) {
             <TableCell>Metal 4</TableCell>
             <TableCell align="right">Production (kg)</TableCell>
             <TableCell align="right">Energy (kWh)</TableCell>
-            <TableCell align="right">Shots Usage</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -71,7 +95,6 @@ function CycleTable({ cycles }: { cycles: GatewaySection2Cycle[] }) {
               <TableCell>{metalCell(c.metal4Name, c.metal4WeightKg)}</TableCell>
               <TableCell align="right">{c.productionKg.toFixed(2)}</TableCell>
               <TableCell align="right">{c.energyKwh.toFixed(3)}</TableCell>
-              <TableCell align="right">{c.shotsUsage.toFixed(4)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -88,9 +111,10 @@ function scopeLabel(s: GatewaySection2): string {
 }
 
 /**
- * Latest completed filtered calculation — mirrors the client dashboard's
- * FilterResultsView, but read-only from the live payload's `section2` (the
- * gateway already computed it; there is no filter form here).
+ * Filtered calculation view — mirrors the client dashboard's FilterResultsView.
+ * Purely a renderer: `section2` may be the live payload's passive mirror or
+ * the result of a cloud-triggered filter request (see FilterBar); this
+ * component owns no filter form itself.
  */
 export default function Section2View({ section2 }: { section2: GatewaySection2 }) {
   const [showRaw, setShowRaw] = useState(false);
@@ -139,6 +163,39 @@ export default function Section2View({ section2 }: { section2: GatewaySection2 }
         </Box>
       )}
 
+      {/* Same 5 values as the card grid above, tabular — for export/reading parity with the local dashboard. */}
+      {s.results.length > 0 && (
+        <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 700 }}>Parameter</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="right">Value</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {s.results.map(r => (
+                <TableRow key={r.parameterName}>
+                  <TableCell>{PARAM_META[r.parameterName]?.label ?? r.parameterName}</TableCell>
+                  <TableCell align="right">{formatParameterValue(r.parameterName, r.value)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {/* Production by casting metal — not derived from Tonnage, see CONTRACT-admin-api.md. */}
+      {s.metals.length > 0 && (
+        <>
+          <Divider sx={{ mb: 2 }} />
+          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+            Production by Casting Metal
+          </Typography>
+          <MetalProductionTable metals={s.metals} />
+        </>
+      )}
+
       {/* Cycle breakdown */}
       {s.cycles.length > 0 && (
         <>
@@ -150,6 +207,17 @@ export default function Section2View({ section2 }: { section2: GatewaySection2 }
           <Box mt={2}>
             <CycleTable cycles={s.cycles} />
           </Box>
+        </>
+      )}
+
+      {/* Historical impeller current — driven by this same filter, no control of its own */}
+      {s.ampsHistory.length > 0 && (
+        <>
+          <Divider sx={{ mt: 3, mb: 2 }} />
+          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+            Impeller Current
+          </Typography>
+          <AmpsHistoryChart data={s.ampsHistory} />
         </>
       )}
 

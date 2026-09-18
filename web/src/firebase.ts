@@ -3,15 +3,26 @@ import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 
-// Public web-app identifiers (not secrets). The demo-* fallbacks keep local
-// emulator development working with no .env at all.
-const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'demo-shotsense';
+// Public web-app identifiers (not secrets), all real — no demo-* placeholders.
+// A missing web/.env must fail loudly, not silently target the wrong
+// project or initialize with a dead key.
+function requireEnv(key: string): string {
+  const value = import.meta.env[key];
+  if (!value) {
+    throw new Error(
+      `${key} is not set. Copy web/.env.example to web/.env and fill in the Firebase project config.`
+    );
+  }
+  return value;
+}
+
+const projectId = requireEnv('VITE_FIREBASE_PROJECT_ID');
 
 const app = initializeApp({
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-api-key',
+  apiKey: requireEnv('VITE_FIREBASE_API_KEY'),
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`,
   projectId,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || 'demo-app-id',
+  appId: requireEnv('VITE_FIREBASE_APP_ID'),
 });
 
 export const FUNCTIONS_REGION = import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1';

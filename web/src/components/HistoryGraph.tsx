@@ -3,7 +3,7 @@ import { Box, CircularProgress, Alert, Typography } from '@mui/material';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { fetchHistory } from '../services/gatewayService';
+import { fetchHistory, describeGatewayFailure } from '../services/gatewayService';
 import { PARAM_META } from '../utils/unitConverters';
 
 interface Props {
@@ -31,9 +31,7 @@ export default function HistoryGraph({ clientId, metric, windowStart, windowEnd,
       .then(result => {
         if (!active) return;
         if (!result.ok) {
-          setError(result.reason === 'unreachable'
-            ? 'Client unreachable — its server or internet may be down.'
-            : `Gateway request failed (${result.reason}${result.status ? ` ${result.status}` : ''}).`);
+          setError(describeGatewayFailure(result));
           setLoading(false);
           return;
         }

@@ -13,18 +13,22 @@ import { LifetimeSection } from '../components/LifetimeSection';
 import AmpsPanel from '../components/AmpsPanel';
 import SpareHealthTable from '../components/SpareHealthTable';
 import Section2View from '../components/Section2View';
+import FilterBar from '../components/FilterBar';
 import HistoryGraph from '../components/HistoryGraph';
-import { fetchLive, fetchHistory } from '../services/gatewayService';
+import { fetchLive, fetchHistory, fetchFilteredCalculation, fetchTrends, describeGatewayFailure } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
 import { useClients } from '../contexts/ClientsContext';
 import { PARAM_META } from '../utils/unitConverters';
 import { formatDateTime } from '../utils/formatters';
-import type { Client, GatewayHistoryResponse, GatewayLiveResponse, LicenseStatus } from '../types';
+import type {
+  Client, GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
+  GatewaySection2, GatewayTrendPoint, LicenseStatus,
+} from '../types';
 
 const AUTO_REFRESH_MS = 30_000;
 const DEFAULT_HISTORY_LIMIT = 2000;
 
-type PullState = 'idle' | 'loading' | 'ok' | 'unreachable' | 'auth-failed' | 'gateway-error';
+type PullState = 'idle' | 'loading' | 'ok' | GatewayFailureReason;
 
 const statusChipSx: Record<LicenseStatus, object> = {
   active:    { backgroundColor: 'rgba(76, 175, 80, 0.1)',  color: '#81c784', border: '1px solid rgba(76, 175, 80, 0.2)' },
@@ -78,6 +82,17 @@ export const ClientDashboard: React.FC = () => {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [showRawHistory, setShowRawHistory] = useState(false);
 
+  // Section 2: starts as the live payload's passive mirror, overwritten by
+  // whatever a cloud-triggered filter request last returned. Every fresh
+  // live pull resets it back to the mirror.
+  const [section2Data, setSection2Data] = useState<GatewaySection2 | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [filterError, setFilterError] = useState<string | null>(null);
+
+  // Whole-history trends — fetched once per dashboard load, not on the live
+  // poll cadence (the underlying rollup only changes about once a minute).
+  const [trends, setTrends] = useState<GatewayTrendPoint[]>([]);
+
   const load = useCallback(async () => {
     if (!id) return;
     setPullState('loading');
@@ -98,7 +113,7 @@ export const ClientDashboard: React.FC = () => {
         setLastFetched(new Date());
       } else {
         setPullState(result.reason);
-        setPullDetail(result.status ? `HTTP ${result.status}` : null);
+        setPullDetail(describeGatewayFailure(result));
       }
     } catch (err) {
       setPullState('gateway-error');
@@ -116,6 +131,37 @@ export const ClientDashboard: React.FC = () => {
     return () => clearInterval(timer);
   }, [autoRefresh, load]);
 
+  useEffect(() => {
+    setSection2Data(live?.section2 ?? null);
+  }, [live]);
+
+  useEffect(() => {
+    if (!id || fixtureMode) return;
+    let active = true;
+    fetchTrends(id, { bucket: 'month' }).then(result => {
+      if (active && result.ok) setTrends(result.data);
+    }).catch(() => { /* graphs just show "no trend data" — not worth a top-level error banner */ });
+    return () => { active = false; };
+  }, [id, fixtureMode]);
+
+  const applyFilter = async (req: GatewayFilterRequest) => {
+    if (!id || fixtureMode) return;
+    setFilterLoading(true);
+    setFilterError(null);
+    try {
+      const result = await fetchFilteredCalculation(id, req);
+      if (result.ok) {
+        setSection2Data(result.data);
+      } else {
+        setFilterError(describeGatewayFailure(result));
+      }
+    } catch (err) {
+      setFilterError((err as Error).message);
+    } finally {
+      setFilterLoading(false);
+    }
+  };
+
   const loadHistory = async () => {
     if (!id || !metric.trim()) return;
     setHistoryLoading(true);
@@ -129,9 +175,7 @@ export const ClientDashboard: React.FC = () => {
         setHistoryLoaded(result.data);
         setHistoryKey(k => k + 1);
       } else {
-        setHistoryError(result.reason === 'unreachable'
-          ? 'Client unreachable — its server or internet may be down.'
-          : `Gateway request failed (${result.reason}${result.status ? ` ${result.status}` : ''}).`);
+        setHistoryError(describeGatewayFailure(result));
       }
     } catch (err) {
       setHistoryError((err as Error).message);
@@ -214,22 +258,13 @@ export const ClientDashboard: React.FC = () => {
         </Box>
       </Box>
 
-      {/* ── Unreachable / error states (D3) ── */}
-      {pullState === 'unreachable' && (
-        <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>
-          <strong>Client unreachable.</strong> The client's server or internet connection may be down.
-          Data shown below (if any) is from the last successful pull{lastFetched ? ` at ${formatDateTime(lastFetched)}` : ''}.
-        </Alert>
-      )}
-      {pullState === 'auth-failed' && (
-        <Alert severity="warning" sx={{ mb: 3, borderRadius: 3 }}>
-          <strong>Gateway rejected the stored API key</strong>{pullDetail ? ` (${pullDetail})` : ''}.
-          Check that the client installation and the registry hold the same Admin API key.
-        </Alert>
-      )}
-      {pullState === 'gateway-error' && (
-        <Alert severity="warning" sx={{ mb: 3, borderRadius: 3 }}>
-          <strong>The gateway returned an error</strong>{pullDetail ? ` (${pullDetail})` : ''}. Try again shortly.
+      {/* ── Unreachable / error states (D3) — one alert covering every distinguishable failure reason ── */}
+      {pullState !== 'idle' && pullState !== 'loading' && pullState !== 'ok' && (
+        <Alert severity={pullState === 'auth-failed' || pullState === 'gateway-error' ? 'warning' : 'error'} sx={{ mb: 3, borderRadius: 3 }}>
+          <strong>{pullDetail ?? 'Gateway request failed.'}</strong>
+          {pullState === 'auth-failed'
+            ? ' Check that the client installation and the registry hold the same Admin API key.'
+            : ` Data shown below (if any) is from the last successful pull${lastFetched ? ` at ${formatDateTime(lastFetched)}` : ''}.`}
         </Alert>
       )}
 
@@ -270,9 +305,9 @@ export const ClientDashboard: React.FC = () => {
           <Divider sx={{ my: 3 }} />
 
           <LifetimeSection
-            clientId={client.id}
             lifetime={live.lifetime}
             shotsBreakdown={live.shotsBreakdown}
+            trends={trends}
             lastFetched={lastFetched}
             loading={pullState === 'loading'}
             onRefresh={() => void load()}
@@ -286,12 +321,17 @@ export const ClientDashboard: React.FC = () => {
 
           <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} />
 
-          {live.section2 && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <Section2View section2={live.section2} />
-            </>
+          <Divider sx={{ my: 3 }} />
+
+          <FilterBar onApply={(req) => void applyFilter(req)} loading={filterLoading} disabled={fixtureMode} />
+          {fixtureMode && (
+            <Alert severity="info" sx={{ mb: 3, borderRadius: 3 }}>
+              Filtering is a separate live query and is disabled in fixture preview.
+            </Alert>
           )}
+          {filterError && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{filterError}</Alert>}
+
+          {section2Data && <Section2View section2={section2Data} />}
 
           <Divider sx={{ my: 3 }} />
         </>

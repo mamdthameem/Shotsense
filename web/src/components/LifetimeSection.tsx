@@ -5,16 +5,23 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandableMetricCard from './ExpandableMetricCard';
 import ShotsBreakdownChart from './ShotsBreakdownChart';
-import HistoryGraph from './HistoryGraph';
-import type { GatewayLifetimeParam, GatewayShotsBreakdownEntry } from '../types';
+import TrendsGraph from './TrendsGraph';
+import type { GatewayLifetimeParam, GatewayShotsBreakdownEntry, GatewayTrendPoint } from '../types';
 
-// Parameters that get graph dialogs — backed by on-demand history pulls.
-const GRAPHABLE: Record<string, { title: string; days: number }> = {
-  machine_utility_pct: { title: 'Daily Utility (last 30 days)', days: 30 },
-  production_qty_kg:   { title: 'Production Over Time (last 7 days)', days: 7 },
+// The 4 graphable lifetime parameters — whole-history data already fetched
+// once via /api/admin/trends (see ClientDashboard), not a per-click pull.
+const GRAPHABLE_TRENDS: Record<string, {
+  title: string;
+  field: 'utilityPct' | 'productionKg' | 'energyKwh' | 'efficiencyKwhPerKg';
+  color: string;
+}> = {
+  machine_utility_pct:       { title: 'Machine Utility — All Time', field: 'utilityPct', color: '#1d4ed8' },
+  production_qty_kg:         { title: 'Production — All Time', field: 'productionKg', color: '#2e7d32' },
+  energy_kwh_total:          { title: 'Total Energy — All Time', field: 'energyKwh', color: '#f59e0b' },
+  energy_per_casting_kwh_kg: { title: 'Energy per Casting — All Time', field: 'efficiencyKwhPerKg', color: '#7c3aed' },
 };
 
-function ShotsUsageTile({ shotsData }: { shotsData: GatewayShotsBreakdownEntry[] }) {
+function CyclesSinceRefillTile({ shotsData }: { shotsData: GatewayShotsBreakdownEntry[] }) {
   const latest = shotsData.length > 0 ? shotsData[shotsData.length - 1] : null;
   return (
     <Paper sx={{ p: 2.5, borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
@@ -22,7 +29,7 @@ function ShotsUsageTile({ shotsData }: { shotsData: GatewayShotsBreakdownEntry[]
         variant="caption"
         sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.07em', fontSize: '0.68rem', textTransform: 'uppercase' }}
       >
-        Effective Shots Usage
+        Cycles Since Refill
       </Typography>
       <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1.3rem', lineHeight: 1.2, mt: 0.5 }}>
         {latest !== null ? `${latest.blastCount} ${latest.blastCount === 1 ? 'cycle' : 'cycles'}` : '—'}
@@ -37,18 +44,16 @@ function ShotsUsageTile({ shotsData }: { shotsData: GatewayShotsBreakdownEntry[]
 }
 
 interface Props {
-  clientId: string;
   lifetime: GatewayLifetimeParam[];
   shotsBreakdown: GatewayShotsBreakdownEntry[];
+  trends: GatewayTrendPoint[];
   lastFetched: Date | null;
   loading: boolean;
   onRefresh: () => void;
 }
 
 /** Mirrors the client dashboard's lifetime section, fed by one live pull. */
-export const LifetimeSection: React.FC<Props> = ({ clientId, lifetime, shotsBreakdown, lastFetched, loading, onRefresh }) => {
-  const now = new Date();
-
+export const LifetimeSection: React.FC<Props> = ({ lifetime, shotsBreakdown, trends, lastFetched, loading, onRefresh }) => {
   // Exclude machine_status (shown separately by MachineStatusTile).
   const displayParams = lifetime.filter(p => p.parameterName !== 'machine_status');
 
@@ -87,10 +92,7 @@ export const LifetimeSection: React.FC<Props> = ({ clientId, lifetime, shotsBrea
           }}
         >
           {displayParams.map(p => {
-            const graphDef = GRAPHABLE[p.parameterName];
-            const windowStart = graphDef
-              ? new Date(now.getTime() - graphDef.days * 24 * 3_600_000).toISOString()
-              : '';
+            const graphDef = GRAPHABLE_TRENDS[p.parameterName];
             return (
               <ExpandableMetricCard
                 key={p.parameterName}
@@ -99,17 +101,12 @@ export const LifetimeSection: React.FC<Props> = ({ clientId, lifetime, shotsBrea
                 updatedAt={p.updatedAt}
                 graphTitle={graphDef?.title}
                 renderGraph={graphDef ? () => (
-                  <HistoryGraph
-                    clientId={clientId}
-                    metric={p.parameterName}
-                    windowStart={windowStart}
-                    windowEnd={now.toISOString()}
-                  />
+                  <TrendsGraph trends={trends} field={graphDef.field} label={graphDef.title} color={graphDef.color} />
                 ) : undefined}
               />
             );
           })}
-          {shotsBreakdown.length > 0 && <ShotsUsageTile shotsData={shotsBreakdown} />}
+          {shotsBreakdown.length > 0 && <CyclesSinceRefillTile shotsData={shotsBreakdown} />}
         </Box>
       )}
 

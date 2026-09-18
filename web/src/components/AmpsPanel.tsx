@@ -1,12 +1,12 @@
 import { Box, Grid, Paper, Typography } from '@mui/material';
 import type { GatewayAmpReading } from '../types';
 
-function impellerNumber(paramName: string): number {
+export function impellerNumber(paramName: string): number {
   const m = paramName.match(/(\d+)$/);
   return m ? parseInt(m[1], 10) : 0;
 }
 
-function impellerLabel(paramName: string): string {
+export function impellerLabel(paramName: string): string {
   const n = impellerNumber(paramName);
   return n ? `Impeller ${n}` : paramName;
 }
