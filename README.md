@@ -1,115 +1,149 @@
 # Sense Shot Cloud
 
-Cloud side of the Sense Shot system: a Firebase-hosted admin console that manages client
-licenses and views each client's machine data **on demand** through that client's own
-gateway API. It never connects to a client's PLC or database — each client installation is
-an opaque box reached only over HTTP(S) at its static IP.
+The cloud side of Sense Shot: a Firebase admin website that manages client licences and shows
+each client's machine data **on demand**, fetched from that client's own gateway. The cloud never
+stores machine data and never talks to a PLC or database — each client's gateway is reached only
+over HTTPS.
+
+## How it works
 
 ```
-Admin browser ──(Firebase Auth)──► Firebase Hosting (React SPA)
-     │  Firestore SDK (admin-only rules) ──► clients/{id} registry
-     │  gatewayProxy (callable fn) ──X-Api-Key──► http(s)://<staticIp>/api/admin/{live|history}
-Client app ──GET + X-License-Key──► licenseCheck (fn) ──► 200 / 402 / 403
+Admin browser ──(email/password login)──► Firebase Hosting (React app)
+   │  reads/writes clients/ in Firestore (admins only)
+   │
+   └─► gatewayProxy (Cloud Function)
+          1. Firebase checks the login token
+          2. requires an admins/<uid> document
+          3. reads the client's gateway address + API key from Firestore (server side)
+          4. calls https://<gateway>/api/admin/{live|trends|filter|history} with X-Api-Key
+          5. passes the JSON back unchanged
+
+Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) ──► 200 / 402 / 403
 ```
 
-- **No machine data is stored in the cloud.** `gatewayProxy` is a pure pass-through.
-- **License status is derived** from each client's allocated expiry date at the moment it
-  is checked — checks are driven by the client app, not a fixed poll.
-- **Two keys per client** (both generated in the dashboard): the *License Key* the client
-  sends to the cloud, and the *Admin API Key* the cloud sends to the client's gateway.
+- **The browser never talks to a gateway.** It only sends a client ID to `gatewayProxy`; the
+  address and API key never leave the server.
+- **HTTPS only.** `gatewayProxy` refuses plain `http://` except to `127.0.0.1` (the local mock
+  gateway). It never follows redirects, so the API key cannot be sent anywhere else.
+- **No machine data is stored in the cloud.** Values are shown exactly as the gateway sends them —
+  never rounded, converted or recalculated (see [CONTRACT-admin-api.md](CONTRACT-admin-api.md)).
+- **Two keys per client**, both generated in the dashboard: the *License Key* (gateway → cloud)
+  and the *Admin API Key* (cloud → gateway).
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `web/` | Admin SPA (Vite + React + TS + MUI) — mirrors the client dashboard's look |
-| `functions/` | Cloud Functions: `licenseCheck` (HTTP) + `gatewayProxy` (callable), region `asia-south1` |
-| `firestore.rules` | Admin-only access to `clients/`; `admins/` is console-managed |
-| `scripts/mock-gateway.mjs` | Local stand-in for a client gateway (dev/testing) |
+| `web/` | Admin website (Vite + React + TypeScript + MUI) |
+| `functions/` | Cloud Functions `licenseCheck` (HTTP) and `gatewayProxy` (callable), region `asia-south1` |
+| `firestore.rules` | Only admins can use `clients/`; `admins/` can only be changed in the Firebase console |
+| `scripts/mock-gateway.mjs` | Fake gateway for local testing (current data format) |
+| `scripts/gen-sample.mjs` | Writes fixture files for `?fixture=1` preview mode |
+| `scripts/emulator-test.mjs` | Emulator-only: creates a test admin + client and checks live data end to end |
+| `scripts/sample-data.mjs` | Shared dummy data used by the mock gateway and the fixtures |
 
-## Firestore model
+## Firestore data
 
-- `clients/{clientId}` — name, staticIp, port, useTls, hostnameOverride, adminApiKey,
-  licenseKey, licenseExpiresAt, graceDays, suspended,
-  lastLicenseCheckAt, lastAdminContactAt, lastContactStatus, recentEvents (capped 20).
-- `admins/{uid}` — presence marks a Firebase Auth user as admin. **Created manually in the
-  Firebase console; there is no self-signup.**
+- `clients/{clientId}` — name, staticIp (IP or hostname), port, useTls, hostnameOverride,
+  adminApiKey, licenseKey, licenseExpiresAt, graceDays, suspended, lastLicenseCheckAt,
+  lastAdminContactAt, lastContactStatus, recentEvents (last 20).
+- `admins/{uid}` — if this document exists, that login is an admin. **Created by hand in the
+  Firebase console. There is no sign-up.**
 
-## License endpoint contract
+## Licence check
 
-`GET https://asia-south1-<project>.cloudfunctions.net/licenseCheck?clientId=<id>` with
-header `X-License-Key`. The caller treats any 2xx as licensed:
+`GET https://asia-south1-shotsense-13b1f.cloudfunctions.net/licenseCheck?clientId=<id>` with header
+`X-License-Key`. The gateway treats any 2xx as licensed:
 
-| Condition | Status | Body `status` |
+| Situation | Status | Body `status` |
 |---|---|---|
-| valid key, before expiry | 200 | `active` |
-| valid key, within `graceDays` past expiry | 200 | `grace` |
-| valid key, past expiry+grace or suspended | 402 | `expired` / `suspended` |
+| right key, before expiry | 200 | `active` |
+| right key, within `graceDays` after expiry | 200 | `grace` |
+| right key, expired or suspended | 402 | `expired` / `suspended` |
 | unknown client or wrong key | 403 | — |
 
-Renewal = an admin extends the expiry date in the dashboard. No payments anywhere.
+Renewing = an admin moves the expiry date in the dashboard.
 
-## Local development (₹0, no Firebase project needed)
+## Timeouts
 
-> The Firestore emulator needs **Java on PATH** — JDK 21+ for firebase-tools 14/15
-> (older firebase-tools 13 accepts Java 11+).
+| Call | Gateway wait | Notes |
+|---|---|---|
+| live, history | 8 s | |
+| trends | 15 s | fetched once per dashboard load (monthly + daily) |
+| filter | **60 s** | function limit 75 s, browser limit 80 s, Cloudflare's own limit 100 s |
+
+Replies larger than 10 MB are refused (use a shorter filter window).
+
+## Local testing with the emulators
+
+Needs Java 21+ on PATH. Nothing here touches the real Firebase project.
 
 ```bash
-npm install            # in functions/  and in web/
+npm install --prefix functions && npm install --prefix web     # first time only
+cp web/.env.example web/.env                                   # then fill in the web app config
+echo VITE_USE_EMULATORS=true > web/.env.development.local      # dev server only (see below)
+
 npm --prefix functions run build
-firebase emulators:start                 # auth + firestore + functions + hosting UI on :4000
-node scripts/mock-gateway.mjs            # fake client gateway on :8091, key "mock-api-key"
-VITE_USE_EMULATORS=true npm --prefix web run dev
+firebase emulators:start --only auth,firestore,functions       # terminal 1
+node scripts/mock-gateway.mjs                                  # terminal 2 (or use a real gateway)
+npm --prefix web run dev                                       # terminal 3 → http://localhost:5173
 ```
 
-1. In the emulator UI (http://127.0.0.1:4000): add an Auth user (email+password), copy its
-   UID, and create Firestore doc `admins/<uid>` with `{ email, createdAt }`.
-2. Sign in to the SPA, add a client: static IP `127.0.0.1`, port `8091`, HTTPS off, and set
-   its **Admin API Key** to `mock-api-key` (regenerate-then-overwrite or paste).
-3. Open the client's dashboard — live data renders; stop the mock to see the
-   "unreachable" state; change the key to see "auth failed".
-4. Exercise the license endpoint (any 2xx = licensed):
-   ```bash
-   curl -i -H "X-License-Key: <licenseKey>" \
-     "http://127.0.0.1:5001/demo-shotsense/asia-south1/licenseCheck?clientId=<id>"
-   ```
-
-## Deployment
-
-Requires a Firebase project on the **Blaze** plan (Cloud Functions cannot be deployed on
-Spark, and outbound calls to client gateways require Blaze). At this system's volumes the
-usage sits far inside the free allowances, so the practical cost is ₹0 — but set a
-**budget alert** (Google Cloud console → Billing → Budgets, e.g. ₹50) as a tripwire. Both
-functions are capped with `maxInstances: 2` and short timeouts.
+Then, in a 4th terminal, add a test admin and client and check the whole chain:
 
 ```bash
-firebase login
-firebase use <your-project-id>           # update .firebaserc
-cp web/.env.example web/.env             # fill in the Firebase web app config
-npm --prefix web run build
-firebase deploy                          # rules + functions + hosting
+# against the mock gateway
+node scripts/emulator-test.mjs --url http://127.0.0.1:8091 --key mock-api-key --name "Mock gateway" --id mock-test
+
+# against a real gateway behind a Cloudflare tunnel
+node scripts/emulator-test.mjs --url https://<words>.trycloudflare.com --key <gateway Admin:ApiKey>
 ```
 
-First admin: Firebase console → Authentication → Add user, then Firestore →
-`admins/<uid>` → `{ email: "...", createdAt: <now> }`.
+It prints the login (`admin@shotsense.test`) and what the gateway sent. Log in at
+http://localhost:5173 and open the client.
 
-## Onboarding a client installation
+If the functions emulator says *"Timeout after 10000"* on the first start (Windows scanning
+`node_modules`), start it with `FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start ...`.
 
-1. Dashboard → **Add Client**: name, static IP, port, expiry. Keys are generated
-   automatically; the dialog shows the exact config snippet.
-2. Configure the client installation with:
-   - license check URL: `https://asia-south1-<project>.cloudfunctions.net/licenseCheck?clientId=<id>`
-   - the **License Key** (sent as `X-License-Key`)
-   - the **Admin API Key** (expected as `X-Api-Key` on `/api/admin/*`)
-3. Note: the gateway-side IP allowlist for `/api/admin/*` cannot be used with Cloud
-   Functions (no static egress IP on the free tier) — the per-client API key over HTTPS is
-   the gate. If the gateway's TLS certificate is issued to a hostname, set the client's
-   *Hostname Override* so certificate validation passes; otherwise use HTTP + key until
-   TLS is set up.
+**Emulator flag safety:** `VITE_USE_EMULATORS=true` belongs only in `web/.env.development.local`.
+The app ignores it outside `npm run dev`, and `npm run build` stops with an error if it is set in
+any file a production build reads — so the live site can never point at `127.0.0.1`.
+
+Preview mode without any gateway: `node scripts/gen-sample.mjs`, then open
+`http://localhost:5173/clients/any-id?fixture=1` on the dev server.
+
+## Deploying
+
+The project `shotsense-13b1f` is on the **Blaze** plan (needed for Cloud Functions and for calling
+gateways). At this system's volumes the cost is ₹0, but keep a **budget alert** as a tripwire.
+
+One-time setup in the Firebase console:
+1. **Firestore** → Create database → location **asia-south1** (cannot be changed later).
+2. **Authentication** → Get started → Sign-in method → **Email/Password** → Enable.
+3. **Authentication** → Users → Add user (your email + a strong password). Copy its **User UID**.
+4. **Firestore** → Start collection `admins` → Document ID = that UID → fields
+   `email` (string), `createdAt` (timestamp).
+
+Then:
+
+```bash
+firebase deploy     # builds functions + web automatically, then deploys rules, functions and hosting
+```
+
+`web/.env` must hold the real web-app config; `npm run build` refuses to run with the emulator flag.
+
+## Adding a client
+
+1. Dashboard → **Add Client**: name, gateway address (an IP, a hostname, or a full
+   `https://...` address such as a Cloudflare tunnel), expiry. Keys are generated for you, and the
+   dialog shows the exact settings to paste into the gateway.
+2. On the gateway set `License:CheckUrl`, `License:Key` and `Admin:ApiKey` from that snippet.
+3. The gateway must be reachable over **HTTPS**. If its certificate is issued to a hostname but you
+   enter an IP, set *Hostname Override*. A Cloudflare tunnel gives HTTPS without a certificate of
+   your own.
 
 ## Free-tier guardrails
 
-- Both functions: `maxInstances: 2`, 256 MiB, 15–20 s timeouts, auth on everything.
-- History pulls default to 2,000 rows (gateway caps at 20,000) to keep egress negligible.
-- The dashboard pulls machine data only on demand (plus an optional 30 s auto-refresh
-  while a dashboard is open) — never a fast background poll.
+- Both functions: at most 2 instances, 256 MiB, short timeouts, login required for `gatewayProxy`.
+- History pulls default to 2,000 rows (gateway maximum 20,000).
+- Machine data is pulled only when a dashboard is open (plus an optional 30 s auto-refresh).

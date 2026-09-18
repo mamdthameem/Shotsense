@@ -31,7 +31,11 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app, FUNCTIONS_REGION);
 
-export const usingEmulators = import.meta.env.VITE_USE_EMULATORS === 'true';
+// Emulators are honoured only by the dev server (`npm run dev`). A production
+// build compiles this to `false`, so a stray VITE_USE_EMULATORS in some .env
+// file can never make the deployed site talk to 127.0.0.1 (vite.config.ts
+// also refuses to build with it set).
+export const usingEmulators = import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true';
 
 if (usingEmulators) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
