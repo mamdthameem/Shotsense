@@ -39,6 +39,10 @@ interface ProxyRequest {
 
 const proxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy');
 
+// The filter call can take up to 60s at the gateway (75s function limit), so
+// the browser must wait longer than the SDK's 70s default before giving up.
+const filterProxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy', { timeout: 80_000 });
+
 /** One on-demand pull of the client's live snapshot — nothing is cached. */
 export async function fetchLive(clientId: string): Promise<ProxyResult<GatewayLiveResponse>> {
   const result = await proxy({ clientId, view: 'live' });
@@ -80,6 +84,6 @@ export async function fetchFilteredCalculation(
   clientId: string,
   filterBody: GatewayFilterRequest
 ): Promise<ProxyResult<GatewaySection2>> {
-  const result = await proxy({ clientId, view: 'filter', filterBody });
+  const result = await filterProxy({ clientId, view: 'filter', filterBody });
   return result.data as ProxyResult<GatewaySection2>;
 }

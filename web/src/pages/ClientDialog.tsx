@@ -46,7 +46,7 @@ const emptyForm = (): FormState => ({
     name: '',
     staticIp: '',
     port: '443',
-    useTls: false,
+    useTls: true,
     hostnameOverride: '',
     licenseKey: generateKey(),
     adminApiKey: generateKey(),
@@ -95,19 +95,35 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
 
     const handleSave = async () => {
         if (!form.name.trim() || !form.staticIp.trim() || !form.licenseExpiresAt) {
-            setError('Name, static IP and license expiry are required.');
+            setError('Name, gateway address and license expiry are required.');
             return;
         }
-        const port = parseInt(form.port, 10);
+        // A pasted full address (e.g. a Cloudflare tunnel URL) sets host, port and HTTPS in one go.
+        let host = form.staticIp.trim();
+        let portText = form.port;
+        let useTls = form.useTls;
+        if (/^https?:\/\//i.test(host)) {
+            let parsed: URL;
+            try {
+                parsed = new URL(host);
+            } catch {
+                setError('That gateway address is not a valid URL.');
+                return;
+            }
+            host = parsed.hostname;
+            useTls = parsed.protocol === 'https:';
+            portText = parsed.port || (useTls ? '443' : '80');
+        }
+        const port = parseInt(portText, 10);
         if (!Number.isFinite(port) || port < 1 || port > 65535) {
             setError('Port must be between 1 and 65535.');
             return;
         }
         const input: ClientInput = {
             name: form.name.trim(),
-            staticIp: form.staticIp.trim(),
+            staticIp: host,
             port,
-            useTls: form.useTls,
+            useTls,
             hostnameOverride: form.hostnameOverride.trim() || null,
             licenseKey: form.licenseKey,
             adminApiKey: form.adminApiKey,
@@ -197,11 +213,11 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                     />
                     <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 2 }}>
                         <TextField
-                            label="Static IP Address"
+                            label="Gateway Address"
                             fullWidth
                             value={form.staticIp}
                             onChange={(e) => set('staticIp', e.target.value)}
-                            placeholder="e.g. 203.0.113.10"
+                            placeholder="IP, hostname, or https://… tunnel address"
                         />
                         <TextField
                             label="Port"
@@ -229,6 +245,13 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                             placeholder="Only if the TLS certificate is issued to a hostname"
                         />
                     </Box>
+                    {!form.useTls && !/^https:\/\//i.test(form.staticIp.trim()) &&
+                        !/^(http:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(form.staticIp.trim()) && (
+                        <Alert severity="warning">
+                            HTTPS is off. The cloud refuses plain HTTP to any address except this computer,
+                            because the API key would travel unencrypted.
+                        </Alert>
+                    )}
 
                     <Divider />
 

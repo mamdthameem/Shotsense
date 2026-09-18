@@ -2,7 +2,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import { assertAdmin } from "./lib/admin";
-import { appendEvent, ClientDoc, ClientEvent, clientRef, ContactStatus } from "./lib/registry";
+import { appendEvent, ClientDoc, ClientEvent, clientRef, ContactStatus, isValidClientId } from "./lib/registry";
 
 interface HistoryQuery {
   metric?: string;
@@ -55,18 +55,32 @@ type ProxyResult =
   | { ok: false; reason: FailureReason; status?: number; message?: string };
 
 // "filter" gets a much longer budget than the others — a synchronous filtered
-// calculation can be slow (CONTRACT-admin-api.md recommends a generous
-// starting timeout pending a real-scale benchmark). Cloud waits up to ~1
-// minute before reporting the client unreachable. "trends" reads a
-// precomputed rollup table so it should be fast, but whole-history queries
-// get a bit more headroom than live/history's tight 8s.
+// calculation can be slow, and CONTRACT-admin-api.md suggests 30–60s until it
+// is benchmarked at real scale; 60s is the top of that range. It must stay
+// under the function's own timeoutSeconds (75s) and Cloudflare's 100s origin
+// limit when the gateway sits behind a tunnel. "trends" reads a precomputed
+// rollup table so it should be fast, but whole-history queries get a bit more
+// headroom than live/history's tight 8s.
 const FETCH_TIMEOUT_MS: Record<"live" | "history" | "trends" | "filter", number> = {
   live: 8000,
   history: 8000,
   trends: 15000,
-  filter: 55000,
+  filter: 60000,
 };
 const MAX_HISTORY_LIMIT = 20000;
+
+// A reply bigger than this is refused rather than relayed (a callable response
+// has to fit in the function's memory and Firebase's response size limit).
+// A very wide filter window is the realistic way to hit it (ampsHistory).
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+// Plain HTTP would send the X-Api-Key across the internet unencrypted, so it
+// is only allowed to this machine (the local mock gateway during emulator runs).
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// Status codes Cloudflare (tunnel) and similar front proxies return when they
+// themselves are up but cannot reach the gateway behind them.
+const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530]);
 
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
@@ -76,15 +90,19 @@ const MAX_HISTORY_LIMIT = 20000;
  * so the dashboard can render a clear "client unreachable" state.
  */
 export const gatewayProxy = onCall(
-  // timeoutSeconds must cover the slowest path (filter, 55s fetch budget)
+  // timeoutSeconds must cover the slowest path (filter, 60s fetch budget)
   // with headroom — live/history/trends still return in seconds as before.
-  { region: "asia-south1", maxInstances: 2, timeoutSeconds: 65, memory: "256MiB" },
+  { region: "asia-south1", maxInstances: 2, timeoutSeconds: 75, memory: "256MiB" },
   async (request): Promise<ProxyResult> => {
+    // Callable functions verify the Firebase ID token before this runs;
+    // assertAdmin then requires request.auth plus an admins/{uid} document.
     await assertAdmin(request);
 
+    // Only the client ID comes from the browser. The gateway address and
+    // API key are read from the registry below, server-side.
     const { clientId, view, query, trendsQuery, filterBody } = (request.data ?? {}) as ProxyRequest;
-    if (!clientId || typeof clientId !== "string") {
-      throw new HttpsError("invalid-argument", "clientId is required.");
+    if (!isValidClientId(clientId)) {
+      throw new HttpsError("invalid-argument", "A valid clientId is required.");
     }
     if (view !== "live" && view !== "history" && view !== "trends" && view !== "filter") {
       throw new HttpsError("invalid-argument", "view must be 'live', 'history', 'trends' or 'filter'.");
@@ -141,6 +159,14 @@ function buildRequest(
   const host = client.hostnameOverride || client.staticIp;
   const port = client.port ?? (client.useTls ? 443 : 80);
   const url = new URL(`${scheme}://${host}:${port}/api/admin/${view}`);
+
+  if (url.protocol !== "https:" && !LOOPBACK_HOSTS.has(url.hostname)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "This client is set to plain HTTP, which would send the API key unencrypted. " +
+        "Turn on HTTPS for it (a Cloudflare tunnel address works)."
+    );
+  }
 
   if (view === "history") {
     if (!query?.metric || !query.from || !query.to) {
@@ -205,8 +231,17 @@ async function fetchGateway(
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       body,
+      // Never follow a redirect: it would re-send X-Api-Key to wherever the
+      // Location header points.
+      redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status >= 300 && response.status < 400) {
+      return {
+        ok: false, reason: "gateway-error", status: response.status,
+        message: "Gateway answered with a redirect. It was not followed, so the API key was not sent anywhere else. Check the client's address.",
+      };
+    }
     if (!response.ok) {
       const upstreamMessage = await readErrorMessage(response);
       if (response.status === 401 || response.status === 403) {
@@ -215,17 +250,51 @@ async function fetchGateway(
           message: upstreamMessage ?? "Gateway rejected the API key.",
         };
       }
+      if (!upstreamMessage && FRONT_PROXY_STATUSES.has(response.status)) {
+        return {
+          ok: false, reason: "gateway-error", status: response.status,
+          message: "The tunnel or proxy in front of the gateway is up, but could not reach the gateway behind it.",
+        };
+      }
       return {
         ok: false, reason: "gateway-error", status: response.status,
         message: upstreamMessage ?? `Gateway returned HTTP ${response.status}.`,
       };
     }
-    return { ok: true, data: await response.json() };
+    return await readJsonBody(response);
   } catch (err) {
     const { reason, message } = classifyFetchError(err, hostname, port);
     logger.info("gateway fetch failed", { url, reason, err: String(err) });
     return { ok: false, reason, message };
   }
+}
+
+/** Reads a 2xx body as JSON, refusing oversized or non-JSON replies with a clear reason. */
+async function readJsonBody(response: Response): Promise<ProxyResult> {
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    return tooLarge(response.status);
+  }
+  const text = await response.text();
+  if (text.length > MAX_RESPONSE_BYTES) {
+    return tooLarge(response.status);
+  }
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch {
+    return {
+      ok: false, reason: "gateway-error", status: response.status,
+      message: "Gateway replied, but not with JSON — the address may point at the wrong server.",
+    };
+  }
+}
+
+function tooLarge(status: number): ProxyResult {
+  return {
+    ok: false, reason: "gateway-error", status,
+    message: "Gateway reply was larger than 10 MB. Try a shorter filter window.",
+  };
 }
 
 /** Best-effort read of the gateway's documented `{"error": "..."}` failure body (CONTRACT-admin-api.md). */

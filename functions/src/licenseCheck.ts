@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import { Timestamp } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
-import { appendEvent, ClientDoc, clientRef, deriveLicenseStatus } from "./lib/registry";
+import { appendEvent, ClientDoc, clientRef, deriveLicenseStatus, isValidClientId } from "./lib/registry";
 
 /**
  * License validation endpoint called by each client installation:
@@ -23,9 +23,9 @@ export const licenseCheck = onRequest(
       return;
     }
 
-    const clientId = typeof req.query.clientId === "string" ? req.query.clientId : "";
+    const clientId = req.query.clientId;
     const providedKey = req.get("X-License-Key") ?? "";
-    if (!clientId || !providedKey) {
+    if (!isValidClientId(clientId) || !providedKey) {
       res.status(403).json({ error: "forbidden" });
       return;
     }

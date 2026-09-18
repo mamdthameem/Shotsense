@@ -36,6 +36,11 @@ export type LicenseStatus = "active" | "grace" | "expired" | "suspended";
 
 const MAX_EVENTS = 20;
 
+/** Client IDs are short generated tokens; anything else (slashes, empty, huge) is rejected before touching Firestore. */
+export function isValidClientId(id: unknown): id is string {
+  return typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
 export function clientRef(clientId: string): DocumentReference {
   return getFirestore().collection("clients").doc(clientId);
 }
