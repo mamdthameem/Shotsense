@@ -3,22 +3,23 @@ import {
   Paper, Typography, Chip, Alert,
 } from '@mui/material';
 import type { GatewaySpareRow } from '../types';
-import { formatRunHours } from '../utils/unitConverters';
-
-const IMPELLER_COUNT = 10;
+import { withUnit } from '../utils/unitConverters';
+import { SelectedImpellersNote } from './AmpsPanel';
 
 interface Props {
   spareGrid: GatewaySpareRow[];
   spareAlerts: GatewaySpareRow[];
+  selected?: number[];   // live.impellers.selected, when the gateway sends it
 }
 
 /**
- * Full spare-health grid — mirrors the client dashboard's 10×14 table, fed by
- * the live snapshot's `spareGrid[]` (140 rows). Triggered cells are highlighted
- * exactly as on the local dashboard. `spareAlerts[]` is surfaced as a summary
- * banner above the grid.
+ * Spare-health grid — mirrors the client dashboard's impeller × spare table,
+ * fed by the live snapshot's `spareGrid[]`. Only the impellers the gateway is
+ * set to show are included, so there may be fewer than 10 columns. Triggered
+ * cells are highlighted exactly as on the local dashboard. `spareAlerts[]` is
+ * surfaced as a summary banner above the grid. Hours are shown exactly as sent.
  */
-export default function SpareHealthTable({ spareGrid, spareAlerts }: Props) {
+export default function SpareHealthTable({ spareGrid, spareAlerts, selected }: Props) {
   // Preserve gateway ordering (by impellerNum, spareIndex) to derive the row set.
   const spareNames = Array.from(
     new Map(
@@ -27,19 +28,21 @@ export default function SpareHealthTable({ spareGrid, spareAlerts }: Props) {
         .map(r => [r.spareName, r.spareIndex] as const)
     ).keys()
   );
-  const impellers = Array.from({ length: IMPELLER_COUNT }, (_, i) => i + 1);
+  // Columns: the gateway's selected list when sent, otherwise whatever impellers the rows cover.
+  const impellers = [...new Set(selected ?? spareGrid.map(r => r.impellerNum))].sort((a, b) => a - b);
   const cell = (imp: number, spare: string) =>
     spareGrid.find(r => r.impellerNum === imp && r.spareName === spare);
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 2 }}>Spare Parts Health</Typography>
+      <Typography variant="h6" sx={{ mb: selected ? 0.5 : 2 }}>Spare Parts Health</Typography>
+      <SelectedImpellersNote selected={selected} />
 
       {spareAlerts.length > 0 && (
         <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
           {spareAlerts.length} active maintenance alert{spareAlerts.length === 1 ? '' : 's'}:{' '}
           {spareAlerts
-            .map(a => `Imp ${a.impellerNum} ${a.spareName} (${formatRunHours(a.currentRunHours)}/${formatRunHours(a.thresholdHours)})`)
+            .map(a => `Imp ${a.impellerNum} ${a.spareName} (${withUnit(a.currentRunHours, 'h')} / ${withUnit(a.thresholdHours, 'h')})`)
             .join(', ')}
         </Alert>
       )}
@@ -71,10 +74,10 @@ export default function SpareHealthTable({ spareGrid, spareAlerts }: Props) {
                     const triggered = c.triggerActive;
                     const replaced = c.lastReplacedAt !== null;
 
-                    const runStr = formatRunHours(c.currentRunHours);
+                    const runStr = withUnit(c.currentRunHours, 'h');
                     const display = noThreshold
                       ? runStr
-                      : `${runStr} / ${formatRunHours(c.thresholdHours)}`;
+                      : `${runStr} / ${withUnit(c.thresholdHours, 'h')}`;
 
                     return (
                       <TableCell

@@ -8,6 +8,18 @@ or unit-convert anything in any of these responses.
 This document matches every action in `PLCGateway/Api/Controllers/AdminController.cs` exactly.
 Any change to that controller must update this file and `sample-response.json` in the same commit.
 
+> **Newer gateway changes not yet written into the sections below** (reported by the gateway
+> owner; the cloud app already follows them — replace this box when the gateway's updated
+> contract arrives):
+> - `effective_shots_usage` is now in **kg/T** (kg of shot per tonne cast); **lower is better**.
+> - `section2.shotsBreakdown` was **removed** (top-level `shotsBreakdown` stays).
+> - `/api/admin/trends` now **includes empty days** as their own entries instead of skipping them.
+> - New field **`impellers.selected`** on `/api/admin/live`: the impellers the gateway is set to
+>   show. `amps[]` and `spareGrid[]` (and so `spareAlerts[]`, `section2.ampsHistory[]`) only
+>   carry rows for those, so they can be shorter than 10 / 140. The cloud assumes it is a list
+>   of impeller numbers, e.g. `"impellers": { "selected": [1, 2, 3, 5] }` — confirm against a
+>   real response.
+
 ---
 
 ## Endpoints

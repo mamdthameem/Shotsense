@@ -33,7 +33,7 @@ export default function ShotsBreakdownChart({ data }: Props) {
           <XAxis dataKey="label" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} />
           <Tooltip
-            formatter={(value) => [value != null ? Number(value).toLocaleString() : '—', 'Blasts']}
+            formatter={(value) => [value != null ? String(value) : '—', 'Blasts']}
           />
           <Bar dataKey="blastCount" name="Blast Count" fill="#1976d2" radius={[3, 3, 0, 0]} />
         </BarChart>

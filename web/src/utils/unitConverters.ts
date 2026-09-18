@@ -1,83 +1,42 @@
-export function secondsToHoursMin(sec: number): string {
-  if (!isFinite(sec) || sec < 0) return '—';
-  const d = Math.floor(sec / 86400);
-  const h = Math.floor((sec % 86400) / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h === 0) return `${m} min`;
-  return `${h}h ${m}m`;
+/**
+ * Display rule (CONTRACT-admin-api.md Rule #1): every value is shown exactly
+ * as the gateway sent it — no rounding, no padding, no unit conversion, no
+ * recalculation. The only thing added is the unit label. Timestamps are the
+ * one exception: they are shown as a local date/time (same instant, readable).
+ */
+
+export interface ParamMeta {
+  label: string;
+  unit?: string;
+  lowerIsBetter?: boolean;
+  isEpochSeconds?: boolean;
 }
 
-export function epochToLocalDatetime(epoch: number): string {
-  if (!isFinite(epoch) || epoch === 0) return '—';
-  return new Date(epoch * 1000).toLocaleString();
-}
-
-export function formatPercent(val: number): string {
-  if (!isFinite(val)) return '—';
-  return `${val.toFixed(2)} %`;
-}
-
-export function formatKwh(val: number): string {
-  if (!isFinite(val)) return '—';
-  return `${val.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })} kWh`;
-}
-
-export function formatKwhPerKg(val: number): string {
-  if (!isFinite(val)) return '—';
-  return `${val.toFixed(4)} kWh/kg`;
-}
-
-export function formatKg(val: number): string {
-  if (!isFinite(val)) return '—';
-  return `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
-}
-
-export function formatRunHours(val: number): string {
-  if (!isFinite(val) || val < 0) return '—';
-  return `${val.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hrs`;
-}
-
-/** Only "" (never refilled — divide-by-zero) means blank; a real computed 0 renders as 0.0000. */
-export function formatKgPerKg(val: number): string {
-  if (!isFinite(val)) return '—';
-  return `${val.toFixed(4)} kg/kg`;
-}
-
-export const PARAM_META: Record<string, { label: string; unit?: string }> = {
-  machine_utility_pct:       { label: 'Machine Utility',      unit: '%' },
-  production_qty_kg:         { label: 'Production' },
-  energy_kwh_total:          { label: 'Total Energy' },
-  energy_per_casting_kwh_kg: { label: 'Energy per Casting' },
-  blast_time_sec:            { label: 'Blast Time' },
-  cycle_count:               { label: 'Blast Cycles',         unit: 'cycles' },
-  avg_shot_refill_time_sec:  { label: 'Avg Shot Refill Time' },
-  last_refill_epoch_sec:     { label: 'Last Shot Refill' },
-  effective_shots_usage:     { label: 'Effective Shots Usage', unit: 'kg/kg' },
+export const PARAM_META: Record<string, ParamMeta> = {
+  machine_utility_pct:       { label: 'Machine Utility',       unit: '%' },
+  production_qty_kg:         { label: 'Production',            unit: 'kg' },
+  energy_kwh_total:          { label: 'Total Energy',          unit: 'kWh' },
+  energy_per_casting_kwh_kg: { label: 'Energy per Casting',    unit: 'kWh/kg' },
+  blast_time_sec:            { label: 'Blast Time',            unit: 's' },
+  cycle_count:               { label: 'Blast Cycles',          unit: 'cycles' },
+  avg_shot_refill_time_sec:  { label: 'Avg Shot Refill Time',  unit: 's' },
+  last_refill_epoch_sec:     { label: 'Last Shot Refill',      isEpochSeconds: true },
+  effective_shots_usage:     { label: 'Effective Shots Usage', unit: 'kg/T', lowerIsBetter: true },
 };
 
+/** The gateway's value text (or JSON number) plus its unit, untouched. Missing or "" shows as "—". */
+export function withUnit(raw: string | number | null | undefined, unit?: string): string {
+  if (raw === null || raw === undefined || raw === '') return '—';
+  return unit ? `${raw} ${unit}` : String(raw);
+}
+
 export function formatParameterValue(name: string, raw: string): string {
-  const n = parseFloat(raw);
-  switch (name) {
-    case 'machine_utility_pct':
-      return formatPercent(n);
-    case 'production_qty_kg':
-      return formatKg(n);
-    case 'energy_kwh_total':
-      return formatKwh(n);
-    case 'energy_per_casting_kwh_kg':
-      return formatKwhPerKg(n);
-    case 'blast_time_sec':
-      return secondsToHoursMin(n);
-    case 'cycle_count':
-      return isFinite(n) ? Math.round(n).toLocaleString() : raw;
-    case 'avg_shot_refill_time_sec':
-      return secondsToHoursMin(n);
-    case 'last_refill_epoch_sec':
-      return epochToLocalDatetime(n);
-    case 'effective_shots_usage':
-      return formatKgPerKg(n);
-    default:
-      return raw;
+  const meta = PARAM_META[name];
+  if (meta?.isEpochSeconds) {
+    const epoch = Number(raw);
+    return raw !== '' && Number.isFinite(epoch) && epoch > 0
+      ? new Date(epoch * 1000).toLocaleString()
+      : withUnit(raw);
   }
+  return withUnit(raw, meta?.unit);
 }

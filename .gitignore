@@ -11,3 +11,6 @@ ui-debug.log*
 pubsub-debug.log*
 .firebase/
 *.tsbuildinfo
+
+# Generated dashboard fixtures (scripts/gen-sample.mjs)
+web/public/sample-*.json

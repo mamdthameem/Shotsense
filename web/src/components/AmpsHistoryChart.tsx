@@ -33,7 +33,8 @@ export default function AmpsHistoryChart({ data }: { data: GatewaySection2AmpPoi
       label: new Date(p.timestamp).toLocaleString(undefined, {
         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       }),
-      [p.parameterName]: parseFloat(p.value),
+      [p.parameterName]: parseFloat(p.value),   // parsed only to plot
+      [`${p.parameterName}__raw`]: p.value,       // shown in the tooltip, as sent
     }));
 
   return (
@@ -43,7 +44,12 @@ export default function AmpsHistoryChart({ data }: { data: GatewaySection2AmpPoi
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v, name) => [`${Number(v ?? 0).toFixed(2)} A`, impellerLabel(String(name))]} />
+          <Tooltip
+            formatter={(_v, name, item) => [
+              `${(item?.payload as Record<string, string> | undefined)?.[`${name}__raw`] ?? '—'} A`,
+              impellerLabel(String(name)),
+            ]}
+          />
           <Legend formatter={(name) => impellerLabel(String(name))} wrapperStyle={{ fontSize: '0.72rem' }} />
           {impellers.map((name, i) => (
             <Line

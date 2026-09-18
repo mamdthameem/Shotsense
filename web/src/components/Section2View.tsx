@@ -8,14 +8,13 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import ExpandableMetricCard from './ExpandableMetricCard';
-import ShotsBreakdownChart from './ShotsBreakdownChart';
 import AmpsHistoryChart from './AmpsHistoryChart';
-import { PARAM_META, formatParameterValue } from '../utils/unitConverters';
+import { PARAM_META, formatParameterValue, withUnit } from '../utils/unitConverters';
 import type { GatewaySection2, GatewaySection2Cycle, GatewaySection2Metal } from '../types';
 
 function metalCell(name: string | null, weight: number | null): string {
   if (!name) return '—';
-  return weight != null ? `${name} ${weight.toFixed(1)} kg` : name;
+  return weight != null ? `${name} ${withUnit(weight, 'kg')}` : name;
 }
 
 /** Per-cycle production & energy — plots values delivered by the gateway (no recompute). */
@@ -57,7 +56,7 @@ function MetalProductionTable({ metals }: { metals: GatewaySection2Metal[] }) {
           {metals.map(m => (
             <TableRow key={m.metalName}>
               <TableCell>{m.metalName}</TableCell>
-              <TableCell align="right">{m.productionKg.toFixed(2)}</TableCell>
+              <TableCell align="right">{m.productionKg}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -93,8 +92,8 @@ function CycleTable({ cycles }: { cycles: GatewaySection2Cycle[] }) {
               <TableCell>{metalCell(c.metal2Name, c.metal2WeightKg)}</TableCell>
               <TableCell>{metalCell(c.metal3Name, c.metal3WeightKg)}</TableCell>
               <TableCell>{metalCell(c.metal4Name, c.metal4WeightKg)}</TableCell>
-              <TableCell align="right">{c.productionKg.toFixed(2)}</TableCell>
-              <TableCell align="right">{c.energyKwh.toFixed(3)}</TableCell>
+              <TableCell align="right">{c.productionKg}</TableCell>
+              <TableCell align="right">{c.energyKwh}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -221,16 +220,6 @@ export default function Section2View({ section2 }: { section2: GatewaySection2 }
         </>
       )}
 
-      {/* Filtered shots chart */}
-      {s.shotsBreakdown.length > 0 && (
-        <>
-          <Divider sx={{ mt: 3, mb: 2 }} />
-          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-            Blast Cycles per Refill Interval
-          </Typography>
-          <ShotsBreakdownChart data={s.shotsBreakdown} />
-        </>
-      )}
     </Box>
   );
 }

@@ -16,7 +16,7 @@ interface Props {
 
 /** One on-demand history pull rendered with the client dashboard's graph styling. */
 export default function HistoryGraph({ clientId, metric, windowStart, windowEnd, limit = 2000 }: Props) {
-  const [data, setData]       = useState<{ label: string; value: number }[]>([]);
+  const [data, setData]       = useState<{ label: string; value: number; raw: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
 
@@ -42,10 +42,11 @@ export default function HistoryGraph({ clientId, metric, windowStart, windowEnd,
               label: new Date(p.timestamp).toLocaleString(undefined, {
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
               }),
-              value: v,
+              value: v,             // parsed only to plot
+              raw: p.value as string, // shown in the tooltip, as sent
             } : null;
           })
-          .filter((x): x is { label: string; value: number } => x !== null);
+          .filter((x): x is { label: string; value: number; raw: string } => x !== null);
         setData(chartData);
         setLoading(false);
       })
@@ -69,7 +70,7 @@ export default function HistoryGraph({ clientId, metric, windowStart, windowEnd,
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" interval="preserveStartEnd" />
           <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v) => [Number(v ?? 0).toLocaleString(), metricLabel]} />
+          <Tooltip formatter={(_v, _n, item) => [(item?.payload as { raw?: string } | undefined)?.raw ?? '—', metricLabel]} />
           <Line type="monotone" dataKey="value" stroke="#1d4ed8" dot={false} strokeWidth={2} name={metricLabel} />
         </LineChart>
       </ResponsiveContainer>

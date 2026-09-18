@@ -130,9 +130,15 @@ export interface GatewaySection2 {
   processedAt: string | null;
   results: GatewaySection2Result[];
   cycles: GatewaySection2Cycle[];
-  shotsBreakdown: GatewayShotsBreakdownEntry[];
   metals: GatewaySection2Metal[];    // ordered by productionKg descending
   ampsHistory: GatewaySection2AmpPoint[]; // historical impeller current within the filter window
+}
+
+// Which impellers the gateway is set to show. amps[] and spareGrid[] only
+// carry rows for these, so both lists can be shorter than 10 / 140.
+// Optional: a gateway older than this change does not send it.
+export interface GatewayImpellers {
+  selected: number[];     // impeller numbers, e.g. [1, 2, 3, 5]
 }
 
 export interface GatewayLiveResponse {
@@ -143,6 +149,7 @@ export interface GatewayLiveResponse {
   machineStatus: GatewayMachineStatus | null;
   lifetime: GatewayLifetimeParam[];
   shotsBreakdown: GatewayShotsBreakdownEntry[];
+  impellers?: GatewayImpellers | null;
   amps: GatewayAmpReading[];
   spareGrid: GatewaySpareRow[];
   spareAlerts: GatewaySpareRow[];
@@ -185,16 +192,25 @@ export interface GatewayTrendsQuery {
 // GET /api/admin/trends — whole-history rollup for the 4 graphable lifetime
 // params. Fetch once per dashboard load, not on the live poll cadence — the
 // underlying data changes at most once a minute server-side.
+// The gateway now includes empty days (no activity) as their own entries, so
+// the series has no gaps in its dates. Values are plotted as sent: a 0 is a
+// real zero; a null (if ever sent) is drawn as a gap, never replaced.
 export interface GatewayTrendPoint {
   day: string;              // bucket start (calendar day, or first-of-month for bucket=month)
-  machineOnSec: number;
-  blastOnSec: number;
-  utilityPct: number;       // rebuilt from summed seconds, not averaged
-  cycleCount: number;
-  productionKg: number;
+  machineOnSec: number | null;
+  blastOnSec: number | null;
+  utilityPct: number | null;       // rebuilt from summed seconds, not averaged
+  cycleCount: number | null;
+  productionKg: number | null;
   tonnageEnd: number | null;
-  energyKwh: number;
-  efficiencyKwhPerKg: number;
+  energyKwh: number | null;
+  efficiencyKwhPerKg: number | null;
+}
+
+/** Both trend series, each fetched once per dashboard load. */
+export interface TrendSeries {
+  day: GatewayTrendPoint[];
+  month: GatewayTrendPoint[];
 }
 
 export type GatewayFailureReason =

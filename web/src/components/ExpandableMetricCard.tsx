@@ -90,6 +90,12 @@ export default function ExpandableMetricCard({
           </Typography>
         )}
 
+        {meta?.lowerIsBetter && (
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>
+            Lower is better
+          </Typography>
+        )}
+
         {updatedAt && (
           <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.62rem', mt: 'auto' }}>
             {new Date(updatedAt).toLocaleTimeString()}

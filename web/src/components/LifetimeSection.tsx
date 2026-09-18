@@ -6,7 +6,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandableMetricCard from './ExpandableMetricCard';
 import ShotsBreakdownChart from './ShotsBreakdownChart';
 import TrendsGraph from './TrendsGraph';
-import type { GatewayLifetimeParam, GatewayShotsBreakdownEntry, GatewayTrendPoint } from '../types';
+import { PARAM_META } from '../utils/unitConverters';
+import type { GatewayLifetimeParam, GatewayShotsBreakdownEntry, TrendSeries } from '../types';
 
 // The 4 graphable lifetime parameters — whole-history data already fetched
 // once via /api/admin/trends (see ClientDashboard), not a per-click pull.
@@ -19,6 +20,7 @@ const GRAPHABLE_TRENDS: Record<string, {
   production_qty_kg:         { title: 'Production — All Time', field: 'productionKg', color: '#2e7d32' },
   energy_kwh_total:          { title: 'Total Energy — All Time', field: 'energyKwh', color: '#f59e0b' },
   energy_per_casting_kwh_kg: { title: 'Energy per Casting — All Time', field: 'efficiencyKwhPerKg', color: '#7c3aed' },
+  // Trend fields share the lifetime parameter's unit (see CONTRACT-admin-api.md /trends).
 };
 
 function CyclesSinceRefillTile({ shotsData }: { shotsData: GatewayShotsBreakdownEntry[] }) {
@@ -46,7 +48,7 @@ function CyclesSinceRefillTile({ shotsData }: { shotsData: GatewayShotsBreakdown
 interface Props {
   lifetime: GatewayLifetimeParam[];
   shotsBreakdown: GatewayShotsBreakdownEntry[];
-  trends: GatewayTrendPoint[];
+  trends: TrendSeries;
   lastFetched: Date | null;
   loading: boolean;
   onRefresh: () => void;
@@ -101,7 +103,13 @@ export const LifetimeSection: React.FC<Props> = ({ lifetime, shotsBreakdown, tre
                 updatedAt={p.updatedAt}
                 graphTitle={graphDef?.title}
                 renderGraph={graphDef ? () => (
-                  <TrendsGraph trends={trends} field={graphDef.field} label={graphDef.title} color={graphDef.color} />
+                  <TrendsGraph
+                    trends={trends}
+                    field={graphDef.field}
+                    label={graphDef.title}
+                    unit={PARAM_META[p.parameterName]?.unit}
+                    color={graphDef.color}
+                  />
                 ) : undefined}
               />
             );

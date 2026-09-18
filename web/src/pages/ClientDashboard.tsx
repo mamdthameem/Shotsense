@@ -22,7 +22,7 @@ import { PARAM_META } from '../utils/unitConverters';
 import { formatDateTime } from '../utils/formatters';
 import type {
   Client, GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
-  GatewaySection2, GatewayTrendPoint, LicenseStatus,
+  GatewaySection2, LicenseStatus, TrendSeries,
 } from '../types';
 
 const AUTO_REFRESH_MS = 30_000;
@@ -89,9 +89,9 @@ export const ClientDashboard: React.FC = () => {
   const [filterLoading, setFilterLoading] = useState(false);
   const [filterError, setFilterError] = useState<string | null>(null);
 
-  // Whole-history trends — fetched once per dashboard load, not on the live
-  // poll cadence (the underlying rollup only changes about once a minute).
-  const [trends, setTrends] = useState<GatewayTrendPoint[]>([]);
+  // Whole-history trends (monthly + daily) — fetched once per dashboard load,
+  // not on the live poll cadence (the rollup only changes about once a minute).
+  const [trends, setTrends] = useState<TrendSeries>({ day: [], month: [] });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -136,11 +136,22 @@ export const ClientDashboard: React.FC = () => {
   }, [live]);
 
   useEffect(() => {
-    if (!id || fixtureMode) return;
+    if (!id) return;
     let active = true;
-    fetchTrends(id, { bucket: 'month' }).then(result => {
-      if (active && result.ok) setTrends(result.data);
-    }).catch(() => { /* graphs just show "no trend data" — not worth a top-level error banner */ });
+    if (fixtureMode) {
+      fetch('/sample-trends.json')
+        .then(r => r.json() as Promise<TrendSeries>)
+        .then(t => { if (active) setTrends(t); })
+        .catch(() => { /* no fixture trends generated — graphs show "no trend data" */ });
+      return () => { active = false; };
+    }
+    // Each series fails independently: graphs just show "no trend data" —
+    // not worth a top-level error banner.
+    for (const bucket of ['month', 'day'] as const) {
+      fetchTrends(id, { bucket }).then(result => {
+        if (active && result.ok) setTrends(prev => ({ ...prev, [bucket]: result.data }));
+      }).catch(() => {});
+    }
     return () => { active = false; };
   }, [id, fixtureMode]);
 
@@ -315,11 +326,11 @@ export const ClientDashboard: React.FC = () => {
 
           <Divider sx={{ my: 3 }} />
 
-          <AmpsPanel amps={live.amps} />
+          <AmpsPanel amps={live.amps} selected={live.impellers?.selected} />
 
           <Divider sx={{ my: 3 }} />
 
-          <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} />
+          <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} selected={live.impellers?.selected} />
 
           <Divider sx={{ my: 3 }} />
 
