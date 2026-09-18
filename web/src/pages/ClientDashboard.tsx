@@ -7,7 +7,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { MachineStatusTile, PlcLinkTile } from '../components/MachineStatusTile';
 import { LifetimeSection } from '../components/LifetimeSection';
 import AmpsPanel from '../components/AmpsPanel';
@@ -15,7 +15,6 @@ import SpareHealthTable from '../components/SpareHealthTable';
 import Section2View from '../components/Section2View';
 import FilterBar from '../components/FilterBar';
 import SectionErrorBoundary from '../components/SectionErrorBoundary';
-import { normalizeLive } from '../utils/normalize';
 import HistoryGraph from '../components/HistoryGraph';
 import { fetchLive, fetchHistory, fetchFilteredCalculation, fetchTrends, describeGatewayFailure } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
@@ -23,7 +22,7 @@ import { useClients } from '../contexts/ClientsContext';
 import { PARAM_META } from '../utils/unitConverters';
 import { formatDateTime } from '../utils/formatters';
 import type {
-  Client, GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
+  GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
   GatewaySection2, LicenseStatus, TrendSeries,
 } from '../types';
 
@@ -49,23 +48,13 @@ const eventChipColor: Record<string, 'success' | 'error' | 'warning' | 'default'
 
 const dateInput = (d: Date) => d.toISOString().split('T')[0];
 
-// Dev-only fixture stub so ?fixture=1 renders the full dashboard with no gateway.
-const fixtureClient = (id: string): Client => ({
-  id, name: 'Fixture Preview', staticIp: 'sample-response.json', port: 0, useTls: false,
-  hostnameOverride: null, adminApiKey: '', licenseKey: '', licenseExpiresAt: new Date(Date.now() + 30 * 864e5),
-  graceDays: 0, suspended: false, lastLicenseCheckAt: null, lastAdminContactAt: null,
-  lastContactStatus: null, recentEvents: [], createdAt: null, updatedAt: null,
-});
-
 /** Per-client dashboard — mirrors the client's own dashboard layout, fed by one
  *  on-demand pull of the extended /api/admin/live payload (nothing cached). */
 export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
-  const fixtureMode = import.meta.env.DEV && searchParams.get('fixture') === '1';
   const navigate = useNavigate();
   const { clients, loading: clientsLoading } = useClients();
-  const client = clients.find(c => c.id === id) ?? (fixtureMode && id ? fixtureClient(id) : null);
+  const client = clients.find(c => c.id === id) ?? null;
 
   const [live, setLive] = useState<GatewayLiveResponse | null>(null);
   const [pullState, setPullState] = useState<PullState>('idle');
@@ -99,14 +88,6 @@ export const ClientDashboard: React.FC = () => {
     if (!id) return;
     setPullState('loading');
     try {
-      if (fixtureMode) {
-        const resp = await fetch('/sample-response.json');
-        setLive(normalizeLive(await resp.json() as GatewayLiveResponse));
-        setPullState('ok');
-        setPullDetail(null);
-        setLastFetched(new Date());
-        return;
-      }
       const result = await fetchLive(id);
       if (result.ok) {
         setLive(result.data);
@@ -121,7 +102,7 @@ export const ClientDashboard: React.FC = () => {
       setPullState('gateway-error');
       setPullDetail((err as Error).message);
     }
-  }, [id, fixtureMode]);
+  }, [id]);
 
   useEffect(() => {
     void load();
@@ -140,13 +121,6 @@ export const ClientDashboard: React.FC = () => {
   useEffect(() => {
     if (!id) return;
     let active = true;
-    if (fixtureMode) {
-      fetch('/sample-trends.json')
-        .then(r => r.json() as Promise<TrendSeries>)
-        .then(t => { if (active) setTrends(t); })
-        .catch(() => { /* no fixture trends generated — graphs show "no trend data" */ });
-      return () => { active = false; };
-    }
     // Each series fails independently: graphs just show "no trend data" —
     // not worth a top-level error banner.
     for (const bucket of ['month', 'day'] as const) {
@@ -155,10 +129,10 @@ export const ClientDashboard: React.FC = () => {
       }).catch(() => {});
     }
     return () => { active = false; };
-  }, [id, fixtureMode]);
+  }, [id]);
 
   const applyFilter = async (req: GatewayFilterRequest) => {
-    if (!id || fixtureMode) return;
+    if (!id) return;
     setFilterLoading(true);
     setFilterError(null);
     try {
@@ -197,7 +171,7 @@ export const ClientDashboard: React.FC = () => {
     }
   };
 
-  if (clientsLoading && !fixtureMode) {
+  if (clientsLoading) {
     return <Box display="flex" justifyContent="center" py={8}><CircularProgress /></Box>;
   }
 
@@ -236,9 +210,6 @@ export const ClientDashboard: React.FC = () => {
                 size="small"
                 sx={{ borderRadius: 1, fontSize: '0.65rem', fontWeight: 700, ...statusChipSx[licenseStatus] }}
               />
-              {fixtureMode && (
-                <Chip label="FIXTURE" size="small" color="info" variant="outlined" sx={{ borderRadius: 1, fontSize: '0.65rem', fontWeight: 700 }} />
-              )}
             </Box>
             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
               {(client.useTls ? 'https://' : 'http://') + (client.hostnameOverride || client.staticIp) + ':' + client.port}
@@ -346,12 +317,7 @@ export const ClientDashboard: React.FC = () => {
 
           <Divider sx={{ my: 3 }} />
 
-          <FilterBar onApply={(req) => void applyFilter(req)} loading={filterLoading} disabled={fixtureMode} />
-          {fixtureMode && (
-            <Alert severity="info" sx={{ mb: 3, borderRadius: 3 }}>
-              Filtering is a separate live query and is disabled in fixture preview.
-            </Alert>
-          )}
+          <FilterBar onApply={(req) => void applyFilter(req)} loading={filterLoading} />
           {filterError && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{filterError}</Alert>}
 
           {section2Data && (
@@ -404,7 +370,7 @@ export const ClientDashboard: React.FC = () => {
             variant="outlined"
             size="small"
             onClick={() => void loadHistory()}
-            disabled={!metric.trim() || historyLoading || fixtureMode}
+            disabled={!metric.trim() || historyLoading}
             sx={{ borderRadius: 2, fontWeight: 700 }}
           >
             {historyLoading ? 'Loading…' : 'Load'}
@@ -417,12 +383,6 @@ export const ClientDashboard: React.FC = () => {
             </Tooltip>
           )}
         </Box>
-
-        {fixtureMode && (
-          <Alert severity="info" sx={{ mb: 2, borderRadius: 3 }}>
-            History is a separate live query and is disabled in fixture preview.
-          </Alert>
-        )}
 
         {historyError && <Alert severity="error" sx={{ mb: 2, borderRadius: 3 }}>{historyError}</Alert>}
 

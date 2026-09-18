@@ -23,8 +23,8 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 
 - **The browser never talks to a gateway.** It only sends a client ID to `gatewayProxy`; the
   address and API key never leave the server.
-- **HTTPS only.** `gatewayProxy` refuses plain `http://` except to `127.0.0.1` (the local mock
-  gateway). It never follows redirects, so the API key cannot be sent anywhere else.
+- **HTTPS only.** `gatewayProxy` refuses plain `http://` for every gateway. It never follows
+  redirects, so the API key cannot be sent anywhere else.
 - **No machine data is stored in the cloud.** Values are shown exactly as the gateway sends them —
   never rounded, converted or recalculated (see [CONTRACT-admin-api.md](CONTRACT-admin-api.md)).
 - **Two keys per client**, both generated in the dashboard: the *License Key* (gateway → cloud)
@@ -37,10 +37,6 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 | `web/` | Admin website (Vite + React + TypeScript + MUI) |
 | `functions/` | Cloud Functions `licenseCheck` (HTTP) and `gatewayProxy` (callable), region `asia-south1` |
 | `firestore.rules` | Only admins can use `clients/`; `admins/` can only be changed in the Firebase console |
-| `scripts/mock-gateway.mjs` | Fake gateway for local testing (current data format) |
-| `scripts/gen-sample.mjs` | Writes fixture files for `?fixture=1` preview mode |
-| `scripts/emulator-test.mjs` | Emulator-only: creates a test admin + client and checks live data end to end |
-| `scripts/sample-data.mjs` | Shared dummy data used by the mock gateway and the fixtures |
 
 ## Firestore data
 
@@ -74,43 +70,17 @@ Renewing = an admin moves the expiry date in the dashboard.
 
 Replies larger than 10 MB are refused (use a shorter filter window).
 
-## Local testing with the emulators
-
-Needs Java 21+ on PATH. Nothing here touches the real Firebase project.
+## Running the website on your PC
 
 ```bash
 npm install --prefix functions && npm install --prefix web     # first time only
 cp web/.env.example web/.env                                   # then fill in the web app config
-echo VITE_USE_EMULATORS=true > web/.env.development.local      # dev server only (see below)
-
-npm --prefix functions run build
-firebase emulators:start --only auth,firestore,functions       # terminal 1
-node scripts/mock-gateway.mjs                                  # terminal 2 (or use a real gateway)
-npm --prefix web run dev                                       # terminal 3 → http://localhost:5173
+npm --prefix web run dev                                       # → http://localhost:5173
 ```
 
-Then, in a 4th terminal, add a test admin and client and check the whole chain:
-
-```bash
-# against the mock gateway
-node scripts/emulator-test.mjs --url http://127.0.0.1:8091 --key mock-api-key --name "Mock gateway" --id mock-test
-
-# against a real gateway behind a Cloudflare tunnel
-node scripts/emulator-test.mjs --url https://<words>.trycloudflare.com --key <gateway Admin:ApiKey>
-```
-
-It prints the login (`admin@shotsense.test`) and what the gateway sent. Log in at
-http://localhost:5173 and open the client.
-
-If the functions emulator says *"Timeout after 10000"* on the first start (Windows scanning
-`node_modules`), start it with `FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start ...`.
-
-**Emulator flag safety:** `VITE_USE_EMULATORS=true` belongs only in `web/.env.development.local`.
-The app ignores it outside `npm run dev`, and `npm run build` stops with an error if it is set in
-any file a production build reads — so the live site can never point at `127.0.0.1`.
-
-Preview mode without any gateway: `node scripts/gen-sample.mjs`, then open
-`http://localhost:5173/clients/any-id?fixture=1` on the dev server.
+There are no emulators or test data: the local website signs in with the **real** logins and
+reads and writes the **real** database and gateways, exactly like the live site. Anything you
+change there changes the live system.
 
 ## Deploying
 
@@ -130,7 +100,7 @@ Then:
 firebase deploy     # builds functions + web automatically, then deploys rules, functions and hosting
 ```
 
-`web/.env` must hold the real web-app config; `npm run build` refuses to run with the emulator flag.
+`web/.env` must hold the real web-app config.
 
 ## Adding a client
 

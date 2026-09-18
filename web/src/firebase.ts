@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
-import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 
 // Public web-app identifiers (not secrets), all real — no demo-* placeholders.
 // A missing web/.env must fail loudly, not silently target the wrong
@@ -31,22 +31,7 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app, FUNCTIONS_REGION);
 
-// Emulators are honoured only by the dev server (`npm run dev`). A production
-// build compiles this to `false`, so a stray VITE_USE_EMULATORS in some .env
-// file can never make the deployed site talk to 127.0.0.1 (vite.config.ts
-// also refuses to build with it set).
-export const usingEmulators = import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true';
-
-if (usingEmulators) {
-  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
-}
-
 /** The License:CheckUrl value a client installation must be configured with. */
 export function licenseCheckUrl(clientId: string): string {
-  if (usingEmulators) {
-    return `http://127.0.0.1:5001/${projectId}/${FUNCTIONS_REGION}/licenseCheck?clientId=${clientId}`;
-  }
   return `https://${FUNCTIONS_REGION}-${projectId}.cloudfunctions.net/licenseCheck?clientId=${clientId}`;
 }

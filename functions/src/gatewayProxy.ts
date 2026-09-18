@@ -74,10 +74,6 @@ const MAX_HISTORY_LIMIT = 20000;
 // A very wide filter window is the realistic way to hit it (ampsHistory).
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
-// Plain HTTP would send the X-Api-Key across the internet unencrypted, so it
-// is only allowed to this machine (the local mock gateway during emulator runs).
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
 // Status codes Cloudflare (tunnel) and similar front proxies return when they
 // themselves are up but cannot reach the gateway behind them.
 const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530]);
@@ -160,7 +156,8 @@ function buildRequest(
   const port = client.port ?? (client.useTls ? 443 : 80);
   const url = new URL(`${scheme}://${host}:${port}/api/admin/${view}`);
 
-  if (url.protocol !== "https:" && !LOOPBACK_HOSTS.has(url.hostname)) {
+  // Plain HTTP would send the X-Api-Key across the internet unencrypted.
+  if (url.protocol !== "https:") {
     throw new HttpsError(
       "failed-precondition",
       "This client is set to plain HTTP, which would send the API key unencrypted. " +

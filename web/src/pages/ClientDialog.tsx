@@ -153,7 +153,7 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
             fullWidth
             value={form[key]}
             onChange={(e) => set(key, e.target.value)}
-            helperText="Auto-generated. Paste a specific value to match an existing installation (e.g. mock-api-key for local testing)."
+            helperText="Auto-generated. Paste a specific value to match an existing installation."
             InputProps={{
                 sx: { fontFamily: 'var(--font-mono)', fontSize: '0.78rem' },
                 endAdornment: (
@@ -245,11 +245,10 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                             placeholder="Only if the TLS certificate is issued to a hostname"
                         />
                     </Box>
-                    {!form.useTls && !/^https:\/\//i.test(form.staticIp.trim()) &&
-                        !/^(http:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(form.staticIp.trim()) && (
+                    {!form.useTls && !/^https:\/\//i.test(form.staticIp.trim()) && (
                         <Alert severity="warning">
-                            HTTPS is off. The cloud refuses plain HTTP to any address except this computer,
-                            because the API key would travel unencrypted.
+                            HTTPS is off. The cloud refuses plain HTTP, because the API key would travel
+                            unencrypted — turn HTTPS on (a Cloudflare tunnel address works).
                         </Alert>
                     )}
 
