@@ -25,10 +25,18 @@ const displayName = (email: string | null): string => {
   return prefix.charAt(0).toUpperCase() + prefix.slice(1);
 };
 
-/** A signed-in account is only usable when it appears in admins/{uid}. */
+/** A signed-in account is only usable when it appears in admins/{uid} (in the
+ *  (default) Firestore database). The rules only let admins read admins/, so
+ *  for a non-admin the read is refused (permission-denied) rather than coming
+ *  back empty — both mean "not an admin". */
 const isListedAdmin = async (fbUser: FirebaseUser): Promise<boolean> => {
-  const snap = await getDoc(doc(db, 'admins', fbUser.uid));
-  return snap.exists();
+  try {
+    const snap = await getDoc(doc(db, 'admins', fbUser.uid));
+    return snap.exists();
+  } catch (err) {
+    if ((err as { code?: string }).code === 'permission-denied') return false;
+    throw err;
+  }
 };
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -61,8 +69,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       if (!(await isListedAdmin(credential.user))) {
+        const uid = credential.user.uid;
         await signOut(auth);
-        return { success: false, error: 'This account does not have admin access.' };
+        return { success: false, error: `This account does not have admin access (UID ${uid}).` };
       }
       return { success: true };
     } catch (err) {
@@ -73,7 +82,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (code === 'auth/too-many-requests') {
         return { success: false, error: 'Too many attempts. Try again later.' };
       }
-      return { success: false, error: 'Connection to authentication server failed' };
+      if (code === 'auth/network-request-failed' || code === 'unavailable') {
+        return { success: false, error: 'Connection to authentication server failed' };
+      }
+      // Anything else: show the real code instead of a guess, so it can be diagnosed.
+      return { success: false, error: `Sign-in failed${code ? ` (${code})` : ''}.` };
     }
   };
 
