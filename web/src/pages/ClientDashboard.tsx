@@ -1,33 +1,28 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Container, Divider, Box, Typography, IconButton, Tooltip, Button, Chip,
-  Alert, CircularProgress, Switch, FormControlLabel, TextField, Autocomplete,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
+  Alert, CircularProgress, Switch, FormControlLabel, Paper,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MachineStatusTile, PlcLinkTile } from '../components/MachineStatusTile';
-import { LifetimeSection } from '../components/LifetimeSection';
+import MachineStatusTile from '../components/MachineStatusTile';
+import { LifetimeSection, TileGrid } from '../components/LifetimeSection';
 import AmpsPanel from '../components/AmpsPanel';
 import SpareHealthTable from '../components/SpareHealthTable';
-import Section2View from '../components/Section2View';
+import FilteredParameters, { filterName, type AppliedFilter } from '../components/FilteredParameters';
 import FilterBar from '../components/FilterBar';
 import SectionErrorBoundary from '../components/SectionErrorBoundary';
-import HistoryGraph from '../components/HistoryGraph';
-import { fetchLive, fetchHistory, fetchFilteredCalculation, fetchTrends, describeGatewayFailure } from '../services/gatewayService';
+import { fetchLive, fetchFilteredCalculation, describeGatewayFailure } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
 import { useClients } from '../contexts/ClientsContext';
-import { PARAM_META } from '../utils/unitConverters';
-import { formatDateTime } from '../utils/formatters';
+import { formatPlantDateTime, formatPlantTime } from '../utils/formatters';
 import type {
-  GatewayFailureReason, GatewayFilterRequest, GatewayHistoryResponse, GatewayLiveResponse,
-  GatewaySection2, LicenseStatus, TrendSeries,
+  GatewayFailureReason, GatewayFilterRequest, GatewayLiveResponse, LicenseStatus,
 } from '../types';
 
 const AUTO_REFRESH_MS = 30_000;
-const DEFAULT_HISTORY_LIMIT = 2000;
 
 type PullState = 'idle' | 'loading' | 'ok' | GatewayFailureReason;
 
@@ -38,18 +33,10 @@ const statusChipSx: Record<LicenseStatus, object> = {
   suspended: { backgroundColor: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8', border: '1px solid rgba(148, 163, 184, 0.2)' },
 };
 
-const eventChipColor: Record<string, 'success' | 'error' | 'warning' | 'default'> = {
-  'license-ok': 'success',
-  'license-denied': 'error',
-  'pull-ok': 'success',
-  'pull-unreachable': 'warning',
-  'pull-auth-failed': 'error',
-};
+const FILTER_FAILED = 'Calculation failed. Please try again.';
 
-const dateInput = (d: Date) => d.toISOString().split('T')[0];
-
-/** Per-client dashboard — mirrors the client's own dashboard layout, fed by one
- *  on-demand pull of the extended /api/admin/live payload (nothing cached). */
+/** Per-client dashboard — mirrors the client's own gateway dashboard, fed by
+ *  on-demand pulls of /api/admin/* (nothing cached). */
 export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -63,26 +50,12 @@ export const ClientDashboard: React.FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showRawLive, setShowRawLive] = useState(false);
 
-  // History form state
-  const [metric, setMetric] = useState('');
-  const [fromDate, setFromDate] = useState(dateInput(new Date(Date.now() - 7 * 24 * 3_600_000)));
-  const [toDate, setToDate] = useState(dateInput(new Date()));
-  const [historyKey, setHistoryKey] = useState(0);
-  const [historyLoaded, setHistoryLoaded] = useState<GatewayHistoryResponse | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [showRawHistory, setShowRawHistory] = useState(false);
-
-  // Section 2: starts as the live payload's passive mirror, overwritten by
-  // whatever a cloud-triggered filter request last returned. Every fresh
-  // live pull resets it back to the mirror.
-  const [section2Data, setSection2Data] = useState<GatewaySection2 | null>(null);
+  // Filtered Parameters: only a filter applied from this page. live.section2
+  // (the gateway's latest calculation, whoever ran it) is never shown, and
+  // nothing is calculated until Apply is pressed. Live refreshes leave it alone.
+  const [applied, setApplied] = useState<AppliedFilter | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
   const [filterError, setFilterError] = useState<string | null>(null);
-
-  // Whole-history trends (monthly + daily) — fetched once per dashboard load,
-  // not on the live poll cadence (the rollup only changes about once a minute).
-  const [trends, setTrends] = useState<TrendSeries>({ day: [], month: [] });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -114,61 +87,35 @@ export const ClientDashboard: React.FC = () => {
     return () => clearInterval(timer);
   }, [autoRefresh, load]);
 
-  useEffect(() => {
-    setSection2Data(live?.section2 ?? null);
-  }, [live]);
-
-  useEffect(() => {
-    if (!id) return;
-    let active = true;
-    // Each series fails independently: graphs just show "no trend data" —
-    // not worth a top-level error banner.
-    for (const bucket of ['month', 'day'] as const) {
-      fetchTrends(id, { bucket }).then(result => {
-        if (active && result.ok) setTrends(prev => ({ ...prev, [bucket]: result.data }));
-      }).catch(() => {});
-    }
-    return () => { active = false; };
-  }, [id]);
-
   const applyFilter = async (req: GatewayFilterRequest) => {
     if (!id) return;
     setFilterLoading(true);
     setFilterError(null);
     try {
       const result = await fetchFilteredCalculation(id, req);
-      if (result.ok) {
-        setSection2Data(result.data);
-      } else {
-        setFilterError(describeGatewayFailure(result));
+      if (!result.ok) {
+        // The reason is also recorded in Recent Events by the proxy.
+        // The proxy also records the reason against the client in Firestore.
+        console.warn('Filter calculation failed:', describeGatewayFailure(result));
+        setFilterError(FILTER_FAILED);
+        return;
       }
+      const s = result.data;
+      setApplied({
+        result: s,
+        selected: s.selectedParameters !== undefined ? s.selectedParameters : req.selectedParameters ?? null,
+      });
     } catch (err) {
-      setFilterError((err as Error).message);
+      console.warn('Filter calculation failed:', err);
+      setFilterError(FILTER_FAILED);
     } finally {
       setFilterLoading(false);
     }
   };
 
-  const loadHistory = async () => {
-    if (!id || !metric.trim()) return;
-    setHistoryLoading(true);
-    setHistoryError(null);
-    setHistoryLoaded(null);
-    try {
-      const result = await fetchHistory(
-        id, metric.trim(), new Date(fromDate), new Date(`${toDate}T23:59:59.999`), DEFAULT_HISTORY_LIMIT
-      );
-      if (result.ok) {
-        setHistoryLoaded(result.data);
-        setHistoryKey(k => k + 1);
-      } else {
-        setHistoryError(describeGatewayFailure(result));
-      }
-    } catch (err) {
-      setHistoryError((err as Error).message);
-    } finally {
-      setHistoryLoading(false);
-    }
+  const resetFilter = () => {
+    setApplied(null);
+    setFilterError(null);
   };
 
   if (clientsLoading) {
@@ -187,10 +134,6 @@ export const ClientDashboard: React.FC = () => {
   }
 
   const licenseStatus = licenseStatusOf(client);
-  const metricOptions = Array.from(new Set([
-    ...(live?.lifetime.map(p => p.parameterName) ?? []),
-    ...Object.keys(PARAM_META),
-  ]));
 
   return (
     <Container maxWidth="xl" sx={{ py: 3 }}>
@@ -213,7 +156,7 @@ export const ClientDashboard: React.FC = () => {
             </Box>
             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'var(--font-mono)' }}>
               {(client.useTls ? 'https://' : 'http://') + (client.hostnameOverride || client.staticIp) + ':' + client.port}
-              {lastFetched && ` · pulled ${lastFetched.toLocaleTimeString()}`}
+              {lastFetched && ` · pulled ${formatPlantTime(lastFetched)}`}
             </Typography>
           </Box>
         </Box>
@@ -248,14 +191,7 @@ export const ClientDashboard: React.FC = () => {
           <strong>{pullDetail ?? 'Gateway request failed.'}</strong>
           {pullState === 'auth-failed'
             ? ' Check that the client installation and the registry hold the same Admin API key.'
-            : ` Data shown below (if any) is from the last successful pull${lastFetched ? ` at ${formatDateTime(lastFetched)}` : ''}.`}
-        </Alert>
-      )}
-
-      {/* ── PLC-disconnected indicator (contract: show, exactly like local dashboard) ── */}
-      {live && !live.plcConnected && (
-        <Alert severity="warning" sx={{ mb: 3, borderRadius: 3 }}>
-          <strong>PLC disconnected.</strong> The machine is treated as OFF; amps and spare hours below are the last values before disconnect.
+            : ` Data shown below (if any) is from the last successful pull${lastFetched ? ` at ${formatPlantDateTime(lastFetched)}` : ''}.`}
         </Alert>
       )}
 
@@ -269,35 +205,34 @@ export const ClientDashboard: React.FC = () => {
           <Box component="pre" sx={{ m: 0, fontFamily: 'var(--font-mono)', fontSize: '0.72rem', overflowX: 'auto', userSelect: 'text', maxHeight: 320 }}>
             {JSON.stringify(live, null, 2)}
           </Box>
+          {applied && (
+            <>
+              <Typography variant="subtitle2" fontWeight={700} mt={2} mb={1}>Raw /api/admin/filter response</Typography>
+              <Box component="pre" sx={{ m: 0, fontFamily: 'var(--font-mono)', fontSize: '0.72rem', overflowX: 'auto', userSelect: 'text', maxHeight: 320 }}>
+                {JSON.stringify(applied.result, null, 2)}
+              </Box>
+            </>
+          )}
         </Paper>
       )}
 
-      {/* ── Section 1 mirror: status tiles → lifetime → amps → spare grid ── */}
+      {/* ── The gateway dashboard, top to bottom ── */}
       {live && (
         <>
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', sm: 'repeat(2,1fr)', md: 'repeat(3,1fr)', lg: 'repeat(4,1fr)' },
-              gap: 2,
-            }}
-          >
+          <TileGrid>
             <SectionErrorBoundary name="Machine status" resetKey={live}>
-              <MachineStatusTile machineStatus={live.machineStatus} />
+              <MachineStatusTile machineStatus={live.machineStatus} plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
             </SectionErrorBoundary>
-            <SectionErrorBoundary name="PLC link" resetKey={live}>
-              <PlcLinkTile plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
-            </SectionErrorBoundary>
-          </Box>
+          </TileGrid>
 
           <Divider sx={{ my: 3 }} />
 
           <SectionErrorBoundary name="Lifetime parameters" resetKey={live}>
             <LifetimeSection
+              clientId={client.id}
               lifetime={live.lifetime}
               shotsBreakdown={live.shotsBreakdown}
-              trends={trends}
-              lastFetched={lastFetched}
+              lastUpdated={lastFetched}
               loading={pullState === 'loading'}
               onRefresh={() => void load()}
             />
@@ -306,181 +241,42 @@ export const ClientDashboard: React.FC = () => {
           <Divider sx={{ my: 3 }} />
 
           <SectionErrorBoundary name="Impeller current" resetKey={live}>
-            <AmpsPanel amps={live.amps} selected={live.impellers?.selected} />
+            <AmpsPanel
+              clientId={client.id}
+              amps={live.amps}
+              ampsLastCycle={live.ampsLastCycle}
+              selected={live.impellers?.selected}
+              plcConnected={live.plcConnected}
+              lastScanAt={live.lastScanAt}
+            />
           </SectionErrorBoundary>
 
           <Divider sx={{ my: 3 }} />
 
-          <SectionErrorBoundary name="Spare parts health" resetKey={live}>
-            <SpareHealthTable spareGrid={live.spareGrid} spareAlerts={live.spareAlerts} selected={live.impellers?.selected} />
+          <SectionErrorBoundary name="Spare part life" resetKey={live}>
+            <SpareHealthTable spareGrid={live.spareGrid} plcConnected={live.plcConnected} lastScanAt={live.lastScanAt} />
           </SectionErrorBoundary>
 
           <Divider sx={{ my: 3 }} />
 
-          <FilterBar onApply={(req) => void applyFilter(req)} loading={filterLoading} />
-          {filterError && <Alert severity="error" sx={{ mb: 3, borderRadius: 3 }}>{filterError}</Alert>}
+          <FilterBar
+            onApply={(req) => void applyFilter(req)}
+            onReset={resetFilter}
+            loading={filterLoading}
+            appliedName={applied ? filterName(applied.result) : null}
+            error={filterError}
+          />
 
-          {section2Data && (
-            <SectionErrorBoundary name="Filtered calculation" resetKey={section2Data}>
-              <Section2View section2={section2Data} />
-            </SectionErrorBoundary>
-          )}
-
-          <Divider sx={{ my: 3 }} />
+          <SectionErrorBoundary name="Filtered parameters" resetKey={applied ?? live}>
+            <FilteredParameters
+              clientId={client.id}
+              clientName={client.name}
+              lifetime={live.lifetime}
+              applied={applied}
+            />
+          </SectionErrorBoundary>
         </>
       )}
-
-      {/* ── History view (D4) ── */}
-      <Box>
-        <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1rem', mb: 0.5 }}>
-          Historical Data
-        </Typography>
-        <Typography variant="caption" color="text.secondary" display="block" mb={2}>
-          One on-demand query against the client's stored history · up to {DEFAULT_HISTORY_LIMIT.toLocaleString()} points
-        </Typography>
-
-        <Box display="flex" gap={2} flexWrap="wrap" alignItems="center" mb={2}>
-          <Autocomplete
-            freeSolo
-            options={metricOptions}
-            value={metric}
-            onInputChange={(_, value) => setMetric(value)}
-            renderInput={(params) => (
-              <TextField {...params} label="Metric" size="small" placeholder="e.g. machine_utility_pct" />
-            )}
-            sx={{ minWidth: 260 }}
-          />
-          <TextField
-            label="From"
-            type="date"
-            size="small"
-            InputLabelProps={{ shrink: true }}
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-          />
-          <TextField
-            label="To"
-            type="date"
-            size="small"
-            InputLabelProps={{ shrink: true }}
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-          />
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={() => void loadHistory()}
-            disabled={!metric.trim() || historyLoading}
-            sx={{ borderRadius: 2, fontWeight: 700 }}
-          >
-            {historyLoading ? 'Loading…' : 'Load'}
-          </Button>
-          {historyLoaded && (
-            <Tooltip title="Show raw JSON">
-              <IconButton size="small" onClick={() => setShowRawHistory(v => !v)} color={showRawHistory ? 'primary' : 'default'}>
-                <CodeIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
-        </Box>
-
-        {historyError && <Alert severity="error" sx={{ mb: 2, borderRadius: 3 }}>{historyError}</Alert>}
-
-        {historyLoaded && (
-          <>
-            <Paper sx={{ p: 2, borderRadius: 3, mb: 2 }}>
-              <Typography variant="subtitle2" fontWeight={700} mb={1}>
-                {PARAM_META[historyLoaded.metric]?.label ?? historyLoaded.metric}
-                {' · '}{historyLoaded.count.toLocaleString()} points
-              </Typography>
-              <HistoryGraph
-                key={historyKey}
-                clientId={client.id}
-                metric={historyLoaded.metric}
-                windowStart={new Date(fromDate).toISOString()}
-                windowEnd={new Date(`${toDate}T23:59:59.999`).toISOString()}
-              />
-            </Paper>
-
-            {showRawHistory && (
-              <Paper sx={{ p: 2, mb: 2, borderRadius: 3 }}>
-                <Typography variant="subtitle2" fontWeight={700} mb={1}>Raw /api/admin/history response</Typography>
-                <Box component="pre" sx={{ m: 0, fontFamily: 'var(--font-mono)', fontSize: '0.72rem', overflowX: 'auto', userSelect: 'text', maxHeight: 320 }}>
-                  {JSON.stringify(historyLoaded, null, 2)}
-                </Box>
-              </Paper>
-            )}
-
-            <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 3, maxHeight: 360 }}>
-              <Table size="small" stickyHeader>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 700 }}>Timestamp</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Value</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Reason</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {historyLoaded.points.map((p, i) => (
-                    <TableRow key={i}>
-                      <TableCell sx={{ fontSize: '0.78rem' }}>{formatDateTime(p.timestamp)}</TableCell>
-                      <TableCell sx={{ fontSize: '0.78rem', fontFamily: 'var(--font-mono)' }}>{p.value ?? '—'}</TableCell>
-                      <TableCell sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>{p.reason}</TableCell>
-                    </TableRow>
-                  ))}
-                  {historyLoaded.points.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                        No points in this window.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </>
-        )}
-      </Box>
-
-      <Divider sx={{ my: 3 }} />
-
-      {/* ── Recent events (E3) ── */}
-      <Box mb={4}>
-        <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1rem', mb: 2 }}>
-          Recent Events
-        </Typography>
-        {client.recentEvents.length === 0 ? (
-          <Typography color="text.secondary" variant="body2">
-            No recorded events yet — license check-ins and admin pulls will appear here.
-          </Typography>
-        ) : (
-          <Paper sx={{ borderRadius: 3 }}>
-            <Table size="small">
-              <TableBody>
-                {[...client.recentEvents].reverse().map((e, i) => (
-                  <TableRow key={i}>
-                    <TableCell sx={{ width: 190, fontSize: '0.78rem', color: 'text.secondary' }}>
-                      {formatDateTime(e.at)}
-                    </TableCell>
-                    <TableCell sx={{ width: 160 }}>
-                      <Chip
-                        label={e.type}
-                        size="small"
-                        color={eventChipColor[e.type] ?? 'default'}
-                        variant="outlined"
-                        sx={{ borderRadius: 1, fontSize: '0.65rem', fontWeight: 700 }}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
-                      {e.detail ?? ''}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Paper>
-        )}
-      </Box>
     </Container>
   );
 };

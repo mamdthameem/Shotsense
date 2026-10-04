@@ -1,104 +1,97 @@
 import {
-  Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Paper, Typography, Chip, Alert,
+  Alert, Box, Chip, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography,
 } from '@mui/material';
+import { formatPlantDateTime } from '../utils/formatters';
+import { formatNumber } from '../utils/unitConverters';
 import type { GatewaySpareRow } from '../types';
-import { withUnit } from '../utils/unitConverters';
-import { SelectedImpellersNote } from './AmpsPanel';
+
+const MAX_COLUMN_PX = 190;
+const MIN_COLUMN_PX = 72;   // below this (phones) the table scrolls inside its box instead
+
+const hours = (n: number | null | undefined) => `${formatNumber(n, 1, true)} hrs`;
 
 interface Props {
   spareGrid: GatewaySpareRow[];
-  spareAlerts: GatewaySpareRow[];
-  selected?: number[];   // live.impellers.selected, when the gateway sends it
+  plcConnected: boolean;
+  lastScanAt: string | null;
 }
 
 /**
- * Spare-health grid — mirrors the client dashboard's impeller × spare table,
- * fed by the live snapshot's `spareGrid[]`. Only the impellers the gateway is
- * set to show are included, so there may be fewer than 10 columns. Triggered
- * cells are highlighted exactly as on the local dashboard. `spareAlerts[]` is
- * surfaced as a summary banner above the grid. Hours are shown exactly as sent.
+ * Spare Part Life — impeller × spare grid from the live snapshot's spareGrid[],
+ * one column per impeller present in it. Columns are capped in width and
+ * shrink to fit, so every impeller shows without sideways scrolling on a
+ * desktop screen.
  */
-export default function SpareHealthTable({ spareGrid, spareAlerts, selected }: Props) {
-  // Preserve gateway ordering (by impellerNum, spareIndex) to derive the row set.
-  const spareNames = Array.from(
-    new Map(
-      [...spareGrid]
-        .sort((a, b) => a.spareIndex - b.spareIndex)
-        .map(r => [r.spareName, r.spareIndex] as const)
-    ).keys()
-  );
-  // Columns: the gateway's selected list when sent, otherwise whatever impellers the rows cover.
-  const impellers = [...new Set(selected ?? spareGrid.map(r => r.impellerNum))].sort((a, b) => a - b);
-  const cell = (imp: number, spare: string) =>
-    spareGrid.find(r => r.impellerNum === imp && r.spareName === spare);
+export default function SpareHealthTable({ spareGrid, plcConnected, lastScanAt }: Props) {
+  const impellers = [...new Set(spareGrid.map(r => r.impellerNum))].sort((a, b) => a - b);
+  const spares = [...new Map(
+    [...spareGrid].sort((a, b) => a.spareIndex - b.spareIndex).map(r => [r.spareIndex, r.spareName] as const)
+  )];
+  const cells = new Map(spareGrid.map(r => [`${r.impellerNum}:${r.spareIndex}`, r]));
+  const columns = impellers.length + 1;
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: selected ? 0.5 : 2 }}>Spare Parts Health</Typography>
-      <SelectedImpellersNote selected={selected} />
-
-      {spareAlerts.length > 0 && (
+      <Typography variant="h6" fontWeight={700}>Spare Part Life</Typography>
+      <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+        Run hours / replacement limit
+      </Typography>
+      {!plcConnected && (
         <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>
-          {spareAlerts.length} active maintenance alert{spareAlerts.length === 1 ? '' : 's'}:{' '}
-          {spareAlerts
-            .map(a => `Imp ${a.impellerNum} ${a.spareName} (${withUnit(a.currentRunHours, 'h')} / ${withUnit(a.thresholdHours, 'h')})`)
-            .join(', ')}
+          PLC disconnected. Run hours below are the last values read at {formatPlantDateTime(lastScanAt)} and are not advancing.
         </Alert>
       )}
 
       {spareGrid.length === 0 ? (
-        <Typography color="text.secondary" variant="body2">No spare-health data reported.</Typography>
+        <Typography color="text.secondary" variant="body2">No spare-part data reported.</Typography>
       ) : (
-        <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
-          <Table size="small" stickyHeader>
+        <TableContainer
+          component={Paper}
+          variant="outlined"
+          sx={{ maxWidth: columns * MAX_COLUMN_PX, mx: 'auto', overflowX: 'auto', borderRadius: 2 }}
+        >
+          <Table
+            size="small"
+            sx={{
+              tableLayout: 'fixed',
+              minWidth: columns * MIN_COLUMN_PX,
+              '& td, & th': { px: 0.75 },
+              // Column names exactly as the gateway writes them (the app theme uppercases table heads).
+              '& th': { textTransform: 'none', letterSpacing: 'normal', fontSize: '0.78rem' },
+            }}
+          >
             <TableHead>
               <TableRow>
-                <TableCell sx={{ fontWeight: 700, minWidth: 150 }}>Spare Part</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>Spare Part</TableCell>
                 {impellers.map(i => (
-                  <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: 110 }}>
-                    Imp {i}
-                  </TableCell>
+                  <TableCell key={i} align="center" sx={{ fontWeight: 700 }}>Impeller {i}</TableCell>
                 ))}
               </TableRow>
             </TableHead>
             <TableBody>
-              {spareNames.map(spare => (
-                <TableRow key={spare}>
-                  <TableCell sx={{ fontWeight: 600 }}>{spare}</TableCell>
+              {spares.map(([index, name]) => (
+                <TableRow key={index}>
+                  <TableCell sx={{ fontWeight: 600, fontSize: '0.78rem' }}>{name}</TableCell>
                   {impellers.map(i => {
-                    const c = cell(i, spare);
+                    const c = cells.get(`${i}:${index}`);
                     if (!c) return <TableCell key={i} align="center">—</TableCell>;
-
-                    const noThreshold = c.thresholdHours === 0;
                     const triggered = c.triggerActive;
-                    const replaced = c.lastReplacedAt !== null;
-
-                    const runStr = withUnit(c.currentRunHours, 'h');
-                    const display = noThreshold
-                      ? runStr
-                      : `${runStr} / ${withUnit(c.thresholdHours, 'h')}`;
-
                     return (
                       <TableCell
                         key={i}
                         align="center"
-                        sx={{ bgcolor: triggered ? 'error.light' : 'inherit', verticalAlign: 'middle' }}
+                        sx={{ bgcolor: triggered ? 'rgba(239, 68, 68, 0.16)' : undefined, color: triggered ? 'error.main' : undefined }}
                       >
-                        <Typography
-                          variant="caption"
-                          display="block"
-                          sx={{ fontWeight: triggered ? 700 : 400, fontSize: '0.72rem' }}
-                        >
-                          {display}
+                        <Typography component="span" sx={{ fontSize: '0.72rem', fontWeight: triggered ? 700 : 400, display: 'block' }}>
+                          {/* A narrow column breaks at the slash, never inside "2,000.0 hrs". */}
+                          <Box component="span" sx={{ whiteSpace: 'nowrap' }}>{hours(c.currentRunHours)}</Box>
+                          {c.thresholdHours !== 0 && (
+                            <>{' / '}<Box component="span" sx={{ whiteSpace: 'nowrap' }}>{hours(c.thresholdHours)}</Box></>
+                          )}
                         </Typography>
-                        {triggered && (
-                          <Chip label="!" color="error" size="small"
-                            sx={{ height: 14, fontSize: 9, mt: 0.25 }} />
-                        )}
-                        {replaced && !triggered && (
-                          <Chip label="✓" color="success" size="small"
-                            sx={{ height: 14, fontSize: 9, mt: 0.25 }} />
+                        {triggered && <Chip label="!" color="error" size="small" sx={{ height: 16, fontSize: 10, mt: 0.25 }} />}
+                        {c.lastReplacedAt && !triggered && (
+                          <Chip label="✓" color="success" size="small" sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
                         )}
                       </TableCell>
                     );

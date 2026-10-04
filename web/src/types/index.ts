@@ -64,15 +64,18 @@ export interface GatewayLifetimeParam {
   updatedAt: string;
 }
 
+// One row per FINISHED refill interval, keyed by the refill that closed it.
+// The interval running now has no row.
 export interface GatewayShotsBreakdownEntry {
-  refillTimestamp: string;
+  refillTimestamp: string;                 // the refill that CLOSED the interval
+  intervalStartTimestamp?: string | null;  // the refill that OPENED it; null = none on record; absent on older gateways
   blastCount: number;
 }
 
 export interface GatewayAmpReading {
-  parameterName: string;  // Current_imp_1 … Current_imp_10 (lexicographic in payload)
+  parameterName: string;  // Current_imp_1 … Current_imp_10, in impeller-number order
   value: string;          // amperes, decimal text ("0" when absent)
-  lastUpdated: string;
+  lastUpdated: string;    // for ampsLastCycle: blastEnd of that cycle
 }
 
 export interface GatewaySpareRow {
@@ -112,11 +115,20 @@ export interface GatewaySection2Metal {
   productionKg: number;    // 2 dp
 }
 
-export interface GatewaySection2AmpPoint {
-  parameterName: string;  // Current_imp_1 … Current_imp_10
-  value: string;          // amperes, decimal text
-  timestamp: string;      // when this reading was recorded
+export interface GatewaySection2Amp {
+  impellerNumber: number;
+  overallAvgAmps: number | null;  // 2 dp; null when no in-scope cycle had a sample
 }
+
+/** The parameter keys POST /api/admin/filter accepts in selectedParameters. */
+export type FilterParameterKey =
+  | 'machine_utility_pct'
+  | 'production_qty_kg'
+  | 'energy_kwh_total'
+  | 'energy_per_casting_kwh_kg'
+  | 'blast_time_sec'
+  | 'cycle_count'
+  | 'impeller_current';
 
 export interface GatewaySection2 {
   requestId: number;
@@ -128,10 +140,26 @@ export interface GatewaySection2 {
   filterCycleTo: number | null;
   filterMetalName: string | null;
   processedAt: string | null;
+  // null = all were computed; absent on gateways older than 2026-09-19.
+  selectedParameters?: string[] | null;
   results: GatewaySection2Result[];
   cycles: GatewaySection2Cycle[];
   metals: GatewaySection2Metal[];    // ordered by productionKg descending
-  ampsHistory: GatewaySection2AmpPoint[]; // historical impeller current within the filter window
+  amps?: GatewaySection2Amp[];       // absent on gateways older than 2026-09-19
+}
+
+/** One cycle's average impeller current (amps/by-cycle and filter/{id}/amps). */
+export interface GatewayCycleAmpPoint {
+  cycleNumber: number;
+  blastEnd: string;
+  avgAmps: number | null;   // null when the cycle has no recorded sample
+}
+
+/** GET /api/admin/filter/{requestId}/amps — one entry per impeller. */
+export interface GatewayFilterAmps {
+  impellerNumber: number;
+  overallAvgAmps: number | null;
+  cycles: GatewayCycleAmpPoint[];
 }
 
 // Which impellers the gateway is set to show. amps[] and spareGrid[] only
@@ -151,26 +179,16 @@ export interface GatewayLiveResponse {
   shotsBreakdown: GatewayShotsBreakdownEntry[];
   impellers?: GatewayImpellers | null;
   amps: GatewayAmpReading[];
+  // Average current over the last completed cycle. Match to amps[] by
+  // parameterName: an impeller with no sample in that cycle is absent.
+  ampsLastCycle: GatewayAmpReading[];
   spareGrid: GatewaySpareRow[];
   spareAlerts: GatewaySpareRow[];
-  section2: GatewaySection2 | null;
+  section2: GatewaySection2 | null;  // not shown: the page computes its own filters
 }
 
-export interface GatewayHistoryPoint {
-  value: string | null;
-  timestamp: string;
-  reason: string;
-}
-
-export interface GatewayHistoryResponse {
-  metric: string;
-  from: string;
-  to: string;
-  count: number;
-  limit: number;
-  offset: number;
-  points: GatewayHistoryPoint[];
-}
+// /api/admin/history has no type here: the client page has no history view.
+// gatewayProxy still proxies that endpoint (see CONTRACT-admin-api.md).
 
 // POST /api/admin/filter request body — matches CONTRACT-admin-api.md exactly.
 export interface GatewayFilterRequest {
@@ -181,36 +199,41 @@ export interface GatewayFilterRequest {
   filterCycleFrom?: number; // required when filterBy === 'cycle'
   filterCycleTo?: number;   // required when filterBy === 'cycle'
   filterMetalName?: string; // required when filterBy === 'metal'
+  selectedParameters?: FilterParameterKey[];
 }
 
+export type TrendBucket = 'hour' | 'day' | 'month';
+
 export interface GatewayTrendsQuery {
-  bucket?: 'hour' | 'day' | 'month'; // default 'day'; 'hour' requires start+end
+  bucket: 'auto';  // always auto: only the gateway knows how much history exists
   start?: string;
   end?: string;
 }
 
-// GET /api/admin/trends — whole-history rollup for the 4 graphable lifetime
-// params. Fetch once per dashboard load, not on the live poll cadence — the
-// underlying data changes at most once a minute server-side.
-// The gateway now includes empty days (no activity) as their own entries, so
-// the series has no gaps in its dates. Values are plotted as sent: a 0 is a
-// real zero; a null (if ever sent) is drawn as a gap, never replaced.
+// GET /api/admin/trends — bucketed rollup behind the tile charts. Fetch once
+// per dashboard load (and once per applied time filter), not on the live poll
+// cadence — the underlying data changes at most once a minute server-side.
+// Every bucket in the range is returned, including empty ones. Values are
+// plotted as sent: a 0 is a real zero; a null is drawn as a gap, never replaced.
+// Field for field the gateway dashboard's own DailyTrend, so its chart components port over
+// unchanged. Only tonnageEnd is nullable (no Tonnage reading yet); an idle bucket is zeros.
 export interface GatewayTrendPoint {
   day: string;              // bucket start (calendar day, or first-of-month for bucket=month)
-  machineOnSec: number | null;
-  blastOnSec: number | null;
-  utilityPct: number | null;       // rebuilt from summed seconds, not averaged
-  cycleCount: number | null;
-  productionKg: number | null;
+  machineOnSec: number;
+  blastOnSec: number;
+  utilityPct: number;       // rebuilt from summed seconds, not averaged
+  cycleCount: number;
+  productionKg: number;
   tonnageEnd: number | null;
-  energyKwh: number | null;
-  efficiencyKwhPerKg: number | null;
+  energyKwh: number;
+  efficiencyKwhPerKg: number;
 }
 
-/** Both trend series, each fetched once per dashboard load. */
+/** A trends fetch: the rows plus the bucket the gateway picked (X-Trend-Bucket). */
 export interface TrendSeries {
-  day: GatewayTrendPoint[];
-  month: GatewayTrendPoint[];
+  /** The granularity the server actually used — the axis is titled from this. */
+  bucket: TrendBucket;
+  rows: GatewayTrendPoint[];
 }
 
 export type GatewayFailureReason =
@@ -223,5 +246,5 @@ export type GatewayFailureReason =
   | 'gateway-error';
 
 export type ProxyResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; trendBucket?: string }
   | { ok: false; reason: GatewayFailureReason; status?: number; message?: string };

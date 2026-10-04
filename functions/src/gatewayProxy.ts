@@ -13,7 +13,7 @@ interface HistoryQuery {
 }
 
 interface TrendsQuery {
-  bucket?: "hour" | "day" | "month";
+  bucket?: "auto" | "hour" | "day" | "month";
   start?: string;
   end?: string;
 }
@@ -27,14 +27,21 @@ interface FilterBody {
   filterCycleFrom?: number;
   filterCycleTo?: number;
   filterMetalName?: string;
+  selectedParameters?: string[];
 }
+
+type View = "live" | "history" | "trends" | "filter" | "amps-by-cycle" | "filter-amps";
+const VIEWS: ReadonlySet<string> = new Set<View>(["live", "history", "trends", "filter", "amps-by-cycle", "filter-amps"]);
+const TREND_BUCKETS: ReadonlySet<string> = new Set(["auto", "hour", "day", "month"]);
 
 interface ProxyRequest {
   clientId?: string;
-  view?: "live" | "history" | "trends" | "filter";
+  view?: View;
   query?: HistoryQuery;
   trendsQuery?: TrendsQuery;
   filterBody?: FilterBody;
+  impeller?: number;   // amps-by-cycle
+  requestId?: number;  // filter-amps
 }
 
 // Network-level failures are split out beyond the historic "unreachable" so the
@@ -50,28 +57,32 @@ type FailureReason =
   | "auth-failed"
   | "gateway-error";
 
+// trendBucket carries the gateway's X-Trend-Bucket response header (the bucket
+// it picked for bucket=auto) when it sends one.
 type ProxyResult =
-  | { ok: true; data: unknown }
+  | { ok: true; data: unknown; trendBucket?: string }
   | { ok: false; reason: FailureReason; status?: number; message?: string };
 
 // "filter" gets a much longer budget than the others — a synchronous filtered
 // calculation can be slow, and CONTRACT-admin-api.md suggests 30–60s until it
 // is benchmarked at real scale; 60s is the top of that range. It must stay
 // under the function's own timeoutSeconds (75s) and Cloudflare's 100s origin
-// limit when the gateway sits behind a tunnel. "trends" reads a precomputed
-// rollup table so it should be fast, but whole-history queries get a bit more
-// headroom than live/history's tight 8s.
-const FETCH_TIMEOUT_MS: Record<"live" | "history" | "trends" | "filter", number> = {
+// limit when the gateway sits behind a tunnel. "trends" and the two per-cycle
+// amps views read whole-history series, so they get a bit more headroom than
+// live/history's tight 8s.
+const FETCH_TIMEOUT_MS: Record<View, number> = {
   live: 8000,
   history: 8000,
   trends: 15000,
   filter: 60000,
+  "amps-by-cycle": 15000,
+  "filter-amps": 15000,
 };
 const MAX_HISTORY_LIMIT = 20000;
 
 // A reply bigger than this is refused rather than relayed (a callable response
 // has to fit in the function's memory and Firebase's response size limit).
-// A very wide filter window is the realistic way to hit it (ampsHistory).
+// A very wide filter window is the realistic way to hit it (filter-amps).
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 // Status codes Cloudflare (tunnel) and similar front proxies return when they
@@ -81,9 +92,10 @@ const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 52
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
  * stored): looks up the client's address + API key in the registry, calls
- * /api/admin/{live|history|trends|filter} over HTTP(S), and returns the JSON
- * as-is. Reachability problems come back as { ok: false } rather than errors
- * so the dashboard can render a clear "client unreachable" state.
+ * /api/admin/{live|history|trends|filter|amps/by-cycle|filter/{id}/amps} over
+ * HTTPS, and returns the JSON as-is. Reachability problems come back as
+ * { ok: false } rather than errors so the dashboard can render a clear
+ * "client unreachable" state.
  */
 export const gatewayProxy = onCall(
   // timeoutSeconds must cover the slowest path (filter, 60s fetch budget)
@@ -96,12 +108,13 @@ export const gatewayProxy = onCall(
 
     // Only the client ID comes from the browser. The gateway address and
     // API key are read from the registry below, server-side.
-    const { clientId, view, query, trendsQuery, filterBody } = (request.data ?? {}) as ProxyRequest;
+    const data = (request.data ?? {}) as ProxyRequest;
+    const { clientId, view } = data;
     if (!isValidClientId(clientId)) {
       throw new HttpsError("invalid-argument", "A valid clientId is required.");
     }
-    if (view !== "live" && view !== "history" && view !== "trends" && view !== "filter") {
-      throw new HttpsError("invalid-argument", "view must be 'live', 'history', 'trends' or 'filter'.");
+    if (!view || !VIEWS.has(view)) {
+      throw new HttpsError("invalid-argument", `view must be one of: ${[...VIEWS].join(", ")}.`);
     }
 
     const ref = clientRef(clientId);
@@ -111,7 +124,7 @@ export const gatewayProxy = onCall(
     }
     const client = snap.data() as ClientDoc;
 
-    const { url, method, body } = buildRequest(client, view, query, trendsQuery, filterBody);
+    const { url, method, body } = buildRequest(client, view, data);
     const result = await fetchGateway(url, client.adminApiKey ?? "", FETCH_TIMEOUT_MS[view], method, body);
 
     // Best-effort reachability bookkeeping — never fail the call over it.
@@ -146,15 +159,26 @@ export const gatewayProxy = onCall(
 
 function buildRequest(
   client: ClientDoc,
-  view: "live" | "history" | "trends" | "filter",
-  query?: HistoryQuery,
-  trendsQuery?: TrendsQuery,
-  filterBody?: FilterBody
+  view: View,
+  { query, trendsQuery, filterBody, impeller, requestId }: ProxyRequest
 ): { url: string; method: "GET" | "POST"; body?: string } {
+  let path: string = view;
+  if (view === "amps-by-cycle") {
+    if (!Number.isInteger(impeller) || impeller! < 1 || impeller! > 10) {
+      throw new HttpsError("invalid-argument", "amps-by-cycle requires impeller 1–10.");
+    }
+    path = "amps/by-cycle";
+  } else if (view === "filter-amps") {
+    if (!Number.isSafeInteger(requestId) || requestId! < 1) {
+      throw new HttpsError("invalid-argument", "filter-amps requires a positive integer requestId.");
+    }
+    path = `filter/${requestId}/amps`;
+  }
+
   const scheme = client.useTls ? "https" : "http";
   const host = client.hostnameOverride || client.staticIp;
   const port = client.port ?? (client.useTls ? 443 : 80);
-  const url = new URL(`${scheme}://${host}:${port}/api/admin/${view}`);
+  const url = new URL(`${scheme}://${host}:${port}/api/admin/${path}`);
 
   // Plain HTTP would send the X-Api-Key across the internet unencrypted.
   if (url.protocol !== "https:") {
@@ -178,8 +202,16 @@ function buildRequest(
     return { url: url.toString(), method: "GET" };
   }
 
+  if (view === "amps-by-cycle") {
+    url.searchParams.set("impeller", String(impeller));
+    return { url: url.toString(), method: "GET" };
+  }
+
   if (view === "trends") {
     const bucket = trendsQuery?.bucket ?? "day";
+    if (!TREND_BUCKETS.has(bucket)) {
+      throw new HttpsError("invalid-argument", "trends bucket must be auto, hour, day or month.");
+    }
     if (bucket === "hour" && (!trendsQuery?.start || !trendsQuery?.end)) {
       throw new HttpsError("invalid-argument", "trends with bucket=hour requires start and end.");
     }
@@ -258,7 +290,14 @@ async function fetchGateway(
         message: upstreamMessage ?? `Gateway returned HTTP ${response.status}.`,
       };
     }
-    return await readJsonBody(response);
+    const result = await readJsonBody(response);
+    // With bucket=auto only the gateway knows which bucket it used; the page
+    // needs it to title the chart, so relay the header's value.
+    const trendBucket = response.headers.get("x-trend-bucket")?.trim().toLowerCase();
+    if (result.ok && trendBucket && TREND_BUCKETS.has(trendBucket) && trendBucket !== "auto") {
+      result.trendBucket = trendBucket;
+    }
+    return result;
   } catch (err) {
     const { reason, message } = classifyFetchError(err, hostname, port);
     logger.info("gateway fetch failed", { url, reason, err: String(err) });
