@@ -7,6 +7,7 @@ import {
   categoryXAxis, Y_AXIS, CHART_MARGIN, niceScaleOf,
   xAxisTitle, yAxisTitle, BUCKET_ADJECTIVE,
 } from '../utils/chartAxis';
+import { plantNumber } from '../utils/plantLocale';
 
 interface Props {
   clientId: string;
@@ -33,8 +34,8 @@ export default function ProductionGraph({ clientId, windowStart, windowEnd }: Pr
   const left  = niceScaleOf(points, p => p.productionKg);
   const right = niceScaleOf(points, p => p.tonnageEnd ?? 0);
 
-  const kg = (v: unknown) =>
-    `${Number(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} kg`;
+  const kg = (v: number | undefined) =>
+    `${plantNumber(v ?? 0, { maximumFractionDigits: 0 })} kg`;
 
   return (
     <TrendChartFrame state={state} emptyMessage="No production data recorded yet.">
@@ -71,7 +72,7 @@ export default function ProductionGraph({ clientId, windowStart, windowEnd }: Pr
           }}
         />
         <Tooltip
-          formatter={(v, name) => [kg(v), name]}
+          formatter={(v: number | undefined, name) => [kg(v), name]}
           labelFormatter={(_l, payload) => payload?.[0]?.payload?.full ?? ''}
         />
         <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />

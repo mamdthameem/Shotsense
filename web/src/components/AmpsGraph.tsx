@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { fetchPerCycleAmps } from '../services/gatewayService';
 import { formatPlantDateTime } from '../utils/formatters';
+import { plantNumber } from '../utils/plantLocale';
 import {
   Y_AXIS, CHART_MARGIN, CHART_HEIGHT, niceScale, numericTicks, xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
@@ -80,7 +81,7 @@ export default function AmpsGraph({ clientId, impellerNumber }: Props) {
   return (
     <Box>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-        Average current per cycle, impeller {impellerNumber}. All {rows.length.toLocaleString()} recorded
+        Average current per cycle, impeller {impellerNumber}. All {plantNumber(rows.length)} recorded
         cycles are plotted. Current climbs as the blades wear and steps back down when they are replaced.
       </Typography>
 
@@ -98,18 +99,18 @@ export default function AmpsGraph({ clientId, impellerNumber }: Props) {
               tick={{ fontSize: 11 }}
               height={52}
               tickMargin={6}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={xAxisTitle('Cycle number')}
             />
             <YAxis
               {...Y_AXIS}
               domain={y.domain}
               ticks={y.ticks}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={yAxisTitle('Average current (A)')}
             />
             <Tooltip
-              formatter={(v) => [typeof v === 'number' ? `${v.toFixed(2)} A` : '—', `Impeller ${impellerNumber}`]}
+              formatter={(v: number | undefined) => [v != null ? `${v.toFixed(2)} A` : '—', `Impeller ${impellerNumber}`]}
               labelFormatter={(label, payload) => `Cycle ${label}, ended ${payload?.[0]?.payload?.when ?? ''}`}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />

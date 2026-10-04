@@ -5,7 +5,7 @@ import {
 import {
   categoryXAxis, Y_AXIS, CHART_MARGIN, niceScaleOf, xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
-import { PLANT, PLANT_LOCALE } from '../utils/trendBuckets';
+import { PLANT_LOCALE, PLANT_TZ as PLANT, PLANT_TIME, plantNumber } from '../utils/plantLocale';
 import { formatPlantDateTime } from '../utils/formatters';
 import type { GatewayShotsBreakdownEntry } from '../types';
 
@@ -64,7 +64,7 @@ export default function ShotsBreakdownChart({ data, height = 300 }: Props) {
 
     return {
       label: (dateCounts.get(date) ?? 0) > 1
-        ? `${date} ${t.toLocaleTimeString(PLANT_LOCALE, { hour: '2-digit', minute: '2-digit', ...PLANT })}`
+        ? `${date} ${t.toLocaleTimeString(PLANT_LOCALE, PLANT_TIME)}`
         : date,
       full: prev
         ? `${formatPlantDateTime(prev)} to ${formatPlantDateTime(t)} (${days!.toFixed(1)} days)`
@@ -92,11 +92,11 @@ export default function ShotsBreakdownChart({ data, height = 300 }: Props) {
             domain={y.domain}
             ticks={y.ticks}
             allowDecimals={false}
-            tickFormatter={(v: number) => v.toLocaleString()}
+            tickFormatter={(v: number) => plantNumber(v)}
             label={yAxisTitle('Blast Cycles')}
           />
           <Tooltip
-            formatter={(value) => [value != null ? Number(value).toLocaleString() : '—', 'Blast Cycles']}
+            formatter={(value: number | undefined) => [value != null ? plantNumber(value) : '—', 'Blast Cycles']}
             labelStyle={{ fontSize: 12 }}
             labelFormatter={(_label, payload) => payload?.[0]?.payload?.full ?? ''}
           />

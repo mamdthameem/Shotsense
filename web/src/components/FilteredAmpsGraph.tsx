@@ -6,6 +6,7 @@ import {
 import { fetchFilteredAmps } from '../services/gatewayService';
 import { IMPELLER_COLORS } from './AmpsGraph';
 import { formatPlantDateTime } from '../utils/formatters';
+import { plantNumber } from '../utils/plantLocale';
 import {
   Y_AXIS, CHART_MARGIN, CHART_HEIGHT, numericTicks, niceScaleOf, xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
@@ -80,7 +81,7 @@ export default function FilteredAmpsGraph({ clientId, requestId, impellerNumber 
   return (
     <Box>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-        Average current per cycle, impeller {impellerNumber}. All {rows.length.toLocaleString()}
+        Average current per cycle, impeller {impellerNumber}. All {plantNumber(rows.length)}
         {' '}cycles in this filter are plotted.
       </Typography>
 
@@ -98,18 +99,18 @@ export default function FilteredAmpsGraph({ clientId, requestId, impellerNumber 
               tick={{ fontSize: 11 }}
               height={52}
               tickMargin={6}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={xAxisTitle('Cycle number')}
             />
             <YAxis
               {...Y_AXIS}
               domain={y.domain}
               ticks={y.ticks}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={yAxisTitle('Average current (A)')}
             />
             <Tooltip
-              formatter={(v) => [typeof v === 'number' ? `${v.toFixed(2)} A` : '—', `Impeller ${impellerNumber}`]}
+              formatter={(v: number | undefined) => [v != null ? `${v.toFixed(2)} A` : '—', `Impeller ${impellerNumber}`]}
               labelFormatter={(label, payload) =>
                 `Cycle ${label}, ended ${payload?.[0]?.payload?.when ?? ''}`}
             />

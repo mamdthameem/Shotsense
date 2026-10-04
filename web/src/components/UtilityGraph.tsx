@@ -49,7 +49,7 @@ export default function UtilityGraph({ clientId, windowStart, windowEnd }: Props
           label={yAxisTitle('Machine Utility (%)')}
         />
         <Tooltip
-          formatter={(v) => [`${Number(v ?? 0).toFixed(1)} %`, 'Machine Utility']}
+          formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(1)} %`, 'Machine Utility']}
           labelFormatter={(_l, payload) => payload?.[0]?.payload?.full ?? ''}
         />
         <Line

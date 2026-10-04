@@ -5,6 +5,7 @@ import {
 import {
   Y_AXIS, CHART_MARGIN, CHART_HEIGHT, niceScaleOf, xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
+import { plantNumber } from '../utils/plantLocale';
 import type { GatewaySection2Metal } from '../types';
 
 interface Props {
@@ -51,7 +52,7 @@ export default function ItemProductionGraph({ items }: Props) {
     <Box>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
         Declared casting weight per item. Total{' '}
-        {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg.
+        {plantNumber(total, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg.
       </Typography>
 
       <Box sx={{ width: '100%', height: CHART_HEIGHT }}>
@@ -74,12 +75,12 @@ export default function ItemProductionGraph({ items }: Props) {
               {...Y_AXIS}
               domain={y.domain}
               ticks={y.ticks}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={yAxisTitle('Declared weight (kg)')}
             />
             <Tooltip
-              formatter={(v) => [
-                `${Number(v ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`,
+              formatter={(v: number | undefined) => [
+                `${plantNumber(v ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`,
                 'Declared weight',
               ]}
             />

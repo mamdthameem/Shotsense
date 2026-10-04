@@ -5,6 +5,7 @@ import {
   categoryXAxis, Y_AXIS, CHART_MARGIN, niceScaleOf,
   xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
+import { plantNumber } from '../utils/plantLocale';
 
 export type TrendMetric = 'energy' | 'blastTime' | 'cycleCount';
 
@@ -40,7 +41,7 @@ const SPECS: Record<TrendMetric, MetricSpec> = {
     axis:    'Energy (kWh)',
     series:  'Energy',
     color:   '#1565c0',
-    format:  v => `${v.toLocaleString(undefined, { maximumFractionDigits: 2 })} kWh`,
+    format:  v => `${plantNumber(v, { maximumFractionDigits: 2 })} kWh`,
     empty:   'No energy data recorded yet.',
   },
   blastTime: {
@@ -58,7 +59,7 @@ const SPECS: Record<TrendMetric, MetricSpec> = {
     axis:    'Blast Cycles',
     series:  'Blast Cycles',
     color:   '#00838f',
-    format:  v => `${Math.round(v).toLocaleString()} cycles`,
+    format:  v => `${plantNumber(Math.round(v))} cycles`,
     empty:   'No blast cycles recorded yet.',
   },
 };
@@ -84,11 +85,11 @@ export default function TrendMetricGraph({ clientId, metric, windowStart, window
           {...Y_AXIS}
           domain={y.domain}
           ticks={y.ticks}
-          tickFormatter={(v: number) => v.toLocaleString()}
+          tickFormatter={(v: number) => plantNumber(v)}
           label={yAxisTitle(spec.axis)}
         />
         <Tooltip
-          formatter={(v) => [spec.format(Number(v ?? 0)), spec.series]}
+          formatter={(v: number | undefined) => [spec.format(v ?? 0), spec.series]}
           labelFormatter={(_l, payload) => payload?.[0]?.payload?.full ?? ''}
         />
         <Bar dataKey="value" name={spec.series} fill={spec.color} radius={[2, 2, 0, 0]} />

@@ -1,4 +1,5 @@
 import { formatPlantDateTime } from './formatters';
+import { PLANT_LOCALE } from './plantLocale';
 
 /**
  * Display rule (CONTRACT-admin-api.md Rule #1): every value is the gateway's
@@ -15,7 +16,8 @@ export function formatNumber(n: number | null | undefined, decimals: number, gro
   const key = `${decimals}|${grouping}`;
   let fmt = numberFormats.get(key);
   if (!fmt) {
-    fmt = new Intl.NumberFormat('en-US', {
+    // The plant's own grouping (12,34,567), matching the gateway dashboard's tiles.
+    fmt = new Intl.NumberFormat(PLANT_LOCALE, {
       minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: grouping,
     });
     numberFormats.set(key, fmt);

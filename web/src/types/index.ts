@@ -8,6 +8,7 @@ export type ClientEventType =
   | 'license-ok'
   | 'license-denied'
   | 'pull-ok'
+  | 'pull-error'          // the gateway answered with an error: reached, but the query failed
   | 'pull-unreachable'
   | 'pull-auth-failed';
 

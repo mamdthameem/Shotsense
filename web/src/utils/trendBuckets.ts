@@ -1,18 +1,10 @@
 import type { TrendBucket } from '../types';
+import { PLANT_LOCALE, PLANT_TZ as PLANT, PLANT_TIME } from './plantLocale';
 
 /*
  * Copied from the gateway dashboard (dashboard/src/utils/trendBuckets.ts), with one change: the
- * locale and time zone are pinned instead of left to the viewer.
- *
- * The gateway's own API sends plant-local times with no zone, and its dashboard is read on
- * machines at the plant, so `toLocaleDateString(undefined, …)` there means plant time in the
- * plant's locale. The admin API sends the same instants in UTC, and this page is read from
- * anywhere — so the viewer's zone would label a day bucket a day early for anyone outside IST
- * (18:30Z on 13 May is the 14 May bucket), and a US locale would print "May 13" where the
- * gateway prints "13 May".
+ * locale and time zone are pinned instead of left to the viewer (see plantLocale).
  */
-const PLANT = { timeZone: 'Asia/Kolkata' } as const;
-const PLANT_LOCALE = 'en-GB';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS  = 86_400_000;
@@ -31,7 +23,7 @@ export function formatBucketLabel(iso: string, bucket: TrendBucket): string {
   const d = new Date(iso);
   switch (bucket) {
     case 'hour':
-      return d.toLocaleString(PLANT_LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', ...PLANT });
+      return d.toLocaleString(PLANT_LOCALE, { day: 'numeric', month: 'short', ...PLANT_TIME });
     case 'month':
       return d.toLocaleDateString(PLANT_LOCALE, { month: 'short', year: 'numeric', ...PLANT });
     default:
@@ -50,7 +42,7 @@ export function formatBucketFull(iso: string, bucket: TrendBucket): string {
   switch (bucket) {
     case 'hour': {
       const end = new Date(d.getTime() + HOUR_MS);
-      const hm  = { hour: '2-digit', minute: '2-digit', ...PLANT } as const;
+      const hm  = PLANT_TIME;
       return `${d.toLocaleDateString(PLANT_LOCALE, { day: 'numeric', month: 'short', year: 'numeric', ...PLANT })}, ` +
              `${d.toLocaleTimeString(PLANT_LOCALE, hm)}–${end.toLocaleTimeString(PLANT_LOCALE, hm)}`;
     }
@@ -68,4 +60,4 @@ export function formatBucketStamp(iso: string): string {
   return new Date(iso).toLocaleDateString(PLANT_LOCALE, { day: 'numeric', month: 'short', year: 'numeric', ...PLANT });
 }
 
-export { HOUR_MS, DAY_MS, PLANT, PLANT_LOCALE };
+export { HOUR_MS, DAY_MS };

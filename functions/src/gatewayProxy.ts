@@ -4,14 +4,6 @@ import { logger } from "firebase-functions/v2";
 import { assertAdmin } from "./lib/admin";
 import { appendEvent, ClientDoc, ClientEvent, clientRef, ContactStatus, isValidClientId } from "./lib/registry";
 
-interface HistoryQuery {
-  metric?: string;
-  from?: string;
-  to?: string;
-  limit?: number;
-  offset?: number;
-}
-
 interface TrendsQuery {
   bucket?: "auto" | "hour" | "day" | "month";
   start?: string;
@@ -30,14 +22,13 @@ interface FilterBody {
   selectedParameters?: string[];
 }
 
-type View = "live" | "history" | "trends" | "filter" | "amps-by-cycle" | "filter-amps";
-const VIEWS: ReadonlySet<string> = new Set<View>(["live", "history", "trends", "filter", "amps-by-cycle", "filter-amps"]);
+type View = "live" | "trends" | "filter" | "amps-by-cycle" | "filter-amps";
+const VIEWS: ReadonlySet<string> = new Set<View>(["live", "trends", "filter", "amps-by-cycle", "filter-amps"]);
 const TREND_BUCKETS: ReadonlySet<string> = new Set(["auto", "hour", "day", "month"]);
 
 interface ProxyRequest {
   clientId?: string;
   view?: View;
-  query?: HistoryQuery;
   trendsQuery?: TrendsQuery;
   filterBody?: FilterBody;
   impeller?: number;   // amps-by-cycle
@@ -69,17 +60,14 @@ type ProxyResult =
 // under the function's own timeoutSeconds (75s) and Cloudflare's 100s origin
 // limit when the gateway sits behind a tunnel. "trends" and the two per-cycle
 // amps views read whole-history series, so they get a bit more headroom than
-// live/history's tight 8s.
+// live's tight 8s.
 const FETCH_TIMEOUT_MS: Record<View, number> = {
   live: 8000,
-  history: 8000,
   trends: 15000,
   filter: 60000,
   "amps-by-cycle": 15000,
   "filter-amps": 15000,
 };
-const MAX_HISTORY_LIMIT = 20000;
-
 // A reply bigger than this is refused rather than relayed (a callable response
 // has to fit in the function's memory and Firebase's response size limit).
 // A very wide filter window is the realistic way to hit it (filter-amps).
@@ -92,14 +80,14 @@ const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 52
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
  * stored): looks up the client's address + API key in the registry, calls
- * /api/admin/{live|history|trends|filter|amps/by-cycle|filter/{id}/amps} over
+ * /api/admin/{live|trends|filter|amps/by-cycle|filter/{id}/amps} over
  * HTTPS, and returns the JSON as-is. Reachability problems come back as
  * { ok: false } rather than errors so the dashboard can render a clear
  * "client unreachable" state.
  */
 export const gatewayProxy = onCall(
   // timeoutSeconds must cover the slowest path (filter, 60s fetch budget)
-  // with headroom — live/history/trends still return in seconds as before.
+  // with headroom — live and trends still return in seconds as before.
   { region: "asia-south1", maxInstances: 2, timeoutSeconds: 75, memory: "256MiB" },
   async (request): Promise<ProxyResult> => {
     // Callable functions verify the Firebase ID token before this runs;
@@ -131,7 +119,7 @@ export const gatewayProxy = onCall(
     // lastAdminContactAt records the last *attempt* (success or failure) so an
     // admin can tell "we just tried and it failed" from "we haven't tried in
     // days" — lastContactStatus carries the outcome of that attempt.
-    const status: ContactStatus = result.ok ? "ok" : result.reason === "auth-failed" ? "auth-failed" : "unreachable";
+    const status = contactStatus(result);
     const now = new Date();
     const update: Record<string, unknown> = {
       lastContactStatus: status,
@@ -140,7 +128,7 @@ export const gatewayProxy = onCall(
     if (!result.ok || client.lastContactStatus !== "ok") {
       const event: ClientEvent = {
         at: now.toISOString(),
-        type: result.ok ? "pull-ok" : result.reason === "auth-failed" ? "pull-auth-failed" : "pull-unreachable",
+        type: eventType(result),
       };
       if (!result.ok) {
         event.detail = `${view} → ${result.reason}${result.status ? ` ${result.status}` : ""}${result.message ? `: ${result.message}` : ""}`;
@@ -157,10 +145,30 @@ export const gatewayProxy = onCall(
   }
 );
 
+/**
+ * A gateway that answers is reachable, whatever it answers. Only a network failure — or a tunnel
+ * reporting it could not reach the gateway behind it — means "unreachable". Without this, one
+ * rejected query (say a `bucket` an older gateway does not know) flagged the whole client as
+ * unreachable in the client list, which is what an admin checks to see whether a site is down.
+ */
+function contactStatus(result: ProxyResult): ContactStatus {
+  if (result.ok) return "ok";
+  if (result.reason === "auth-failed") return "auth-failed";
+  const answered =
+    result.reason === "gateway-error" && result.status !== undefined && !FRONT_PROXY_STATUSES.has(result.status);
+  return answered ? "ok" : "unreachable";
+}
+
+function eventType(result: ProxyResult): ClientEvent["type"] {
+  if (result.ok) return "pull-ok";
+  if (result.reason === "auth-failed") return "pull-auth-failed";
+  return contactStatus(result) === "ok" ? "pull-error" : "pull-unreachable";
+}
+
 function buildRequest(
   client: ClientDoc,
   view: View,
-  { query, trendsQuery, filterBody, impeller, requestId }: ProxyRequest
+  { trendsQuery, filterBody, impeller, requestId }: ProxyRequest
 ): { url: string; method: "GET" | "POST"; body?: string } {
   let path: string = view;
   if (view === "amps-by-cycle") {
@@ -187,19 +195,6 @@ function buildRequest(
       "This client is set to plain HTTP, which would send the API key unencrypted. " +
         "Turn on HTTPS for it (a Cloudflare tunnel address works)."
     );
-  }
-
-  if (view === "history") {
-    if (!query?.metric || !query.from || !query.to) {
-      throw new HttpsError("invalid-argument", "history requires metric, from and to.");
-    }
-    url.searchParams.set("metric", query.metric);
-    url.searchParams.set("from", query.from);
-    url.searchParams.set("to", query.to);
-    const limit = Math.min(Math.max(1, query.limit ?? 2000), MAX_HISTORY_LIMIT);
-    url.searchParams.set("limit", String(limit));
-    url.searchParams.set("offset", String(Math.max(0, query.offset ?? 0)));
-    return { url: url.toString(), method: "GET" };
   }
 
   if (view === "amps-by-cycle") {

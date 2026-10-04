@@ -15,7 +15,7 @@ Admin browser ──(email/password login)──► Firebase Hosting (React app)
           1. Firebase checks the login token
           2. requires an admins/<uid> document
           3. reads the client's gateway address + API key from Firestore (server side)
-          4. calls https://<gateway>/api/admin/{live|trends|filter|history|amps/by-cycle|filter/{id}/amps}
+          4. calls https://<gateway>/api/admin/{live|trends|filter|amps/by-cycle|filter/{id}/amps}
              with X-Api-Key
           5. passes the JSON back unchanged (plus the X-Trend-Bucket header's value for trends)
 
@@ -32,6 +32,9 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   times in plant time (IST) as `14/05/2026, 15:29:33`.
 - **Filters run only when an admin presses Apply.** The client page never shows the gateway's own
   latest filtered calculation (`section2` in `/live`).
+- **"Unreachable" means unreachable.** A gateway that answers, even with an error, counts as
+  reached; only a network failure, or a tunnel that cannot reach the gateway behind it, marks a
+  client unreachable in the client list.
 - **Two keys per client**, both generated in the dashboard: the *License Key* (gateway → cloud)
   and the *Admin API Key* (cloud → gateway).
 
@@ -69,7 +72,7 @@ Renewing = an admin moves the expiry date in the dashboard.
 
 | Call | Gateway wait | Notes |
 |---|---|---|
-| live, history | 8 s | history is proxied but nothing in the website calls it |
+| live | 8 s | |
 | trends | 15 s | always `bucket=auto`, one call per chart opened (as on the gateway's own dashboard) |
 | amps/by-cycle, filter/{id}/amps | 15 s | when an impeller chart is opened |
 | filter | **60 s** | function limit 75 s, browser limit 80 s, Cloudflare's own limit 100 s |
@@ -134,6 +137,6 @@ Add `--dry-run` to check a deploy without shipping anything.
 ## Free-tier guardrails
 
 - Both functions: at most 2 instances, 256 MiB, short timeouts, login required for `gatewayProxy`.
-- The client page does not read `/api/admin/history`; `gatewayProxy` still proxies it, capped at
-  20,000 rows a page.
+- `gatewayProxy` proxies only the five calls the client page makes. The gateway's
+  `/api/admin/history` is not among them — nothing here reads raw tag history.
 - Machine data is pulled only when a dashboard is open (plus an optional 30 s auto-refresh).

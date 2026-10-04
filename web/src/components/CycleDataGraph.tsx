@@ -6,6 +6,7 @@ import {
   Y_AXIS, CHART_MARGIN, CHART_HEIGHT, numericTicks, niceScaleOf, xAxisTitle, yAxisTitle,
 } from '../utils/chartAxis';
 import { formatPlantDateTime } from '../utils/formatters';
+import { plantNumber } from '../utils/plantLocale';
 import type { GatewaySection2Cycle } from '../types';
 
 interface Props {
@@ -45,8 +46,8 @@ export default function CycleDataGraph({ cycles }: Props) {
   return (
     <Box>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-        One point per blast cycle. All {data.length.toLocaleString()} cycles in this filter are
-        plotted, cycles {data[0].cycle.toLocaleString()} to {data[data.length - 1].cycle.toLocaleString()}.
+        One point per blast cycle. All {plantNumber(data.length)} cycles in this filter are
+        plotted, cycles {plantNumber(data[0].cycle)} to {plantNumber(data[data.length - 1].cycle)}.
       </Typography>
 
       <Box sx={{ width: '100%', height: CHART_HEIGHT }}>
@@ -63,18 +64,18 @@ export default function CycleDataGraph({ cycles }: Props) {
               tick={{ fontSize: 11 }}
               height={52}
               tickMargin={6}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={xAxisTitle('Cycle number')}
             />
             <YAxis
               {...Y_AXIS}
               domain={y.domain}
               ticks={y.ticks}
-              tickFormatter={(v: number) => v.toLocaleString()}
+              tickFormatter={(v: number) => plantNumber(v)}
               label={yAxisTitle('Energy (kWh)')}
             />
             <Tooltip
-              formatter={(v) => [`${Number(v ?? 0).toFixed(3)} kWh`, 'Energy']}
+              formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(3)} kWh`, 'Energy']}
               labelFormatter={(label, payload) =>
                 `Cycle ${label}, ${payload?.[0]?.payload?.start ?? ''}`}
             />
