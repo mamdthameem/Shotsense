@@ -62,7 +62,7 @@ const SidebarInner: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px', marginBottom: 20, overflow: 'hidden' }}>
           <img
             src="/Untitled_design-removebg-preview.png"
-            alt="SENSE SHOT"
+            alt="SHOT SENSE"
             style={{ width: 32, height: 28, objectFit: 'contain', flexShrink: 0 }}
           />
           <motion.span
@@ -78,7 +78,7 @@ const SidebarInner: React.FC = () => {
               pointerEvents: 'none',
             }}
           >
-            SENSE SHOT
+            SHOT SENSE
           </motion.span>
         </div>
 

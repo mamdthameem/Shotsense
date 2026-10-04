@@ -141,7 +141,7 @@ export const Login: React.FC = () => {
             <Box
               component="img"
               src="/Untitled_design-removebg-preview.png"
-              alt="Sense Shot"
+              alt="Shot Sense"
               sx={{
                 width: { xs: 52, md: 68 },
                 height: { xs: 48, md: 64 },
@@ -168,7 +168,7 @@ export const Login: React.FC = () => {
                 mb: 1.5,
               }}
             >
-              SENSE SHOT
+              SHOT SENSE
             </Typography>
           </motion.div>
 
@@ -287,7 +287,7 @@ export const Login: React.FC = () => {
             <Box
               component="img"
               src="/Untitled_design-removebg-preview.png"
-              alt="Sense Shot"
+              alt="Shot Sense"
               sx={{ width: 34, height: 32, objectFit: 'contain' }}
             />
             <Typography
@@ -298,7 +298,7 @@ export const Login: React.FC = () => {
                 color: '#fff',
               }}
             >
-              SENSE SHOT
+              SHOT SENSE
             </Typography>
           </Box>
 
@@ -458,7 +458,7 @@ export const Login: React.FC = () => {
               letterSpacing: '0.04em',
             }}
           >
-            © {new Date().getFullYear()} Sense Shot Technologies
+            © {new Date().getFullYear()} Shot Sense Technologies
           </Typography>
         </motion.div>
       </Box>
