@@ -13,6 +13,7 @@ import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { ClientList } from './pages/ClientList';
 import { ClientDashboard } from './pages/ClientDashboard';
+import { ClientUsers } from './pages/ClientUsers';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { theme } = useTheme();
@@ -66,6 +67,16 @@ const ThemeWrapper: React.FC = () => {
                       <ProtectedRoute>
                         <Layout>
                           <ClientDashboard />
+                        </Layout>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/clients/:id/users"
+                    element={
+                      <ProtectedRoute>
+                        <Layout>
+                          <ClientUsers />
                         </Layout>
                       </ProtectedRoute>
                     }

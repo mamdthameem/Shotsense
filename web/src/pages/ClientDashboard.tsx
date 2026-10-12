@@ -6,6 +6,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
+import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
 import { useNavigate, useParams } from 'react-router-dom';
 import MachineStatusTile from '../components/MachineStatusTile';
 import { LifetimeSection, TileGrid } from '../components/LifetimeSection';
@@ -16,6 +17,7 @@ import FilterBar from '../components/FilterBar';
 import SectionErrorBoundary from '../components/SectionErrorBoundary';
 import { fetchLive, fetchFilteredCalculation, describeGatewayFailure } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
+import { useAuth } from '../contexts/AuthContext';
 import { useClients } from '../contexts/ClientsContext';
 import { formatPlantDateTime, formatPlantTime } from '../utils/formatters';
 import type {
@@ -41,6 +43,7 @@ export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { clients, loading: clientsLoading } = useClients();
+  const { isSuperAdmin } = useAuth();
   const client = clients.find(c => c.id === id) ?? null;
 
   const [live, setLive] = useState<GatewayLiveResponse | null>(null);
@@ -162,6 +165,17 @@ export const ClientDashboard: React.FC = () => {
         </Box>
 
         <Box display="flex" alignItems="center" gap={1}>
+          {isSuperAdmin && (
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<PeopleOutlineIcon />}
+              onClick={() => navigate(`/clients/${client.id}/users`)}
+              sx={{ borderRadius: 2, fontWeight: 700 }}
+            >
+              Users
+            </Button>
+          )}
           <FormControlLabel
             control={<Switch size="small" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />}
             label="Auto 30s"

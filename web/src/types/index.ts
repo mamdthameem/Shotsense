@@ -43,7 +43,24 @@ export interface Client {
 export interface AdminUser {
   uid: string;
   email: string;
-  name: string; // display label derived from the email
+  name: string;          // display label derived from the email
+  isSuperAdmin: boolean; // the superAdmin custom claim: may manage client logins
+}
+
+// ── Client logins (Firebase Auth + clientUsers/{uid}) ────────────────────────
+
+/** What a client's own people may do on their gateway dashboard. */
+export type ClientUserRole = 'admin' | 'viewer';
+
+export interface ClientUser {
+  uid: string;
+  email: string;
+  name: string;
+  clientId: string;
+  role: ClientUserRole;
+  disabled: boolean;
+  createdAt: string | null;     // ISO
+  lastSignInAt: string | null;  // ISO; null until they first sign in
 }
 
 // ── Gateway API payloads (returned as-is by the proxy, never stored) ─────────

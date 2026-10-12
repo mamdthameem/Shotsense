@@ -8,3 +8,7 @@ functions/lib/
 firebase-debug.log*
 .firebase/
 *.tsbuildinfo
+
+# Service-account keys: master credentials for the project, never committed.
+*serviceAccount*.json
+*-service-account.json

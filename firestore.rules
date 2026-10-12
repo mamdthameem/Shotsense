@@ -10,6 +10,11 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
+    // The superAdmin custom claim, set only by functions/scripts/grant-super-admin.mjs.
+    function isSuperAdmin() {
+      return request.auth != null && request.auth.token.superAdmin == true;
+    }
+
     // Client registry: readable/writable by authenticated admins only.
     match /clients/{clientId} {
       allow read, write: if isAdmin();
@@ -18,6 +23,14 @@ service cloud.firestore {
     // Admin roster: managed from the Firebase console, never from the app.
     match /admins/{uid} {
       allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Client logins, mirrored from Firebase Auth for listing. Only a super admin may read it,
+    // and writes go through the callable functions (the Admin SDK bypasses these rules), so a
+    // role or a clientId can never be edited straight from a browser.
+    match /clientUsers/{uid} {
+      allow read: if isSuperAdmin();
       allow write: if false;
     }
 

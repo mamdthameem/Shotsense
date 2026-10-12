@@ -14,6 +14,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   isAdmin: boolean;
+  /** Carries the superAdmin claim: may manage client logins. */
+  isSuperAdmin: boolean;
   isLoading: boolean;
 }
 
@@ -29,6 +31,16 @@ const displayName = (email: string | null): string => {
  *  (default) Firestore database). The rules only let admins read admins/, so
  *  for a non-admin the read is refused (permission-denied) rather than coming
  *  back empty — both mean "not an admin". */
+/** The superAdmin custom claim, read from the signed ID token rather than any database row. */
+const hasSuperAdminClaim = async (fbUser: FirebaseUser): Promise<boolean> => {
+  try {
+    const token = await fbUser.getIdTokenResult();
+    return token.claims.superAdmin === true;
+  } catch {
+    return false;
+  }
+};
+
 const isListedAdmin = async (fbUser: FirebaseUser): Promise<boolean> => {
   try {
     const snap = await getDoc(doc(db, 'admins', fbUser.uid));
@@ -52,7 +64,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       try {
         if (await isListedAdmin(fbUser)) {
-          setUser({ uid: fbUser.uid, email: fbUser.email ?? '', name: displayName(fbUser.email) });
+          setUser({
+            uid: fbUser.uid,
+            email: fbUser.email ?? '',
+            name: displayName(fbUser.email),
+            isSuperAdmin: await hasSuperAdminClaim(fbUser),
+          });
         } else {
           await signOut(auth);
           setUser(null);
@@ -99,6 +116,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     login,
     logout,
     isAdmin: user !== null,
+    isSuperAdmin: user?.isSuperAdmin === true,
     isLoading,
   };
 
