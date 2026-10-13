@@ -19,7 +19,6 @@ import {
   fetchLive, fetchFilteredCalculation, fetchSavedFilter, describeGatewayFailure,
 } from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
-import { useAuth } from '../contexts/AuthContext';
 import { useClients } from '../contexts/ClientsContext';
 import { formatPlantDateTime, formatPlantTime } from '../utils/formatters';
 import { filterFromSearchParams, filterToSearchParams, requestFromSection2 } from '../utils/filterUrl';
@@ -58,7 +57,6 @@ export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { clients, loading: clientsLoading } = useClients();
-  const { isSuperAdmin } = useAuth();
   const client = clients.find(c => c.id === id) ?? null;
 
   const [live, setLive] = useState<GatewayLiveResponse | null>(null);
@@ -260,17 +258,15 @@ export const ClientDashboard: React.FC = () => {
         </Box>
 
         <Box display="flex" alignItems="center" gap={1}>
-          {isSuperAdmin && (
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<PeopleOutlineIcon />}
-              onClick={() => navigate(`/clients/${client.id}/users`)}
-              sx={{ borderRadius: 2, fontWeight: 700 }}
-            >
-              Users
-            </Button>
-          )}
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PeopleOutlineIcon />}
+            onClick={() => navigate(`/clients/${client.id}/users`)}
+            sx={{ borderRadius: 2, fontWeight: 700 }}
+          >
+            Users
+          </Button>
           <FormControlLabel
             control={<Switch size="small" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />}
             label="Auto 30s"
@@ -357,6 +353,7 @@ export const ClientDashboard: React.FC = () => {
               selected={live.impellers?.selected}
               plcConnected={live.plcConnected}
               lastScanAt={live.lastScanAt}
+              onImpellersSaved={() => void load()}
             />
           </SectionErrorBoundary>
 

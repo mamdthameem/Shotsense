@@ -7,6 +7,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
 import AmpsGraph from './AmpsGraph';
 import FilteredAmpsGraph from './FilteredAmpsGraph';
+import ImpellerSelector from './ImpellerSelector';
 import { formatPlantDateTime, formatTileTimestamp } from '../utils/formatters';
 import { formatNumber, parseValue } from '../utils/unitConverters';
 import type { GatewayAmpReading, GatewaySection2Amp } from '../types';
@@ -14,19 +15,6 @@ import type { GatewayAmpReading, GatewaySection2Amp } from '../types';
 export function impellerNumber(paramName: string): number {
   const m = paramName.match(/(\d+)$/);
   return m ? parseInt(m[1], 10) : 0;
-}
-
-/** One line naming the impellers the gateway shows, when it tells us (impellers.selected). */
-export function SelectedImpellersNote({ selected }: { selected?: number[] }) {
-  if (!selected) return null;
-  const list = [...selected].sort((a, b) => a - b).join(', ');
-  return (
-    <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-      {selected.length === 0
-        ? 'The gateway is set to show no impellers.'
-        : `Showing impeller${selected.length === 1 ? '' : 's'} ${list} — the others are hidden in the gateway's settings.`}
-    </Typography>
-  );
 }
 
 /** Five fixed-width tiles per row on wide screens, centred as a block (9 impellers sit as 5 + 4). */
@@ -132,14 +120,19 @@ interface LiveProps {
   selected?: number[];
   plcConnected: boolean;
   lastScanAt: string | null;
+  /** After the impeller selection is saved: pull /live again for the recalculated figures. */
+  onImpellersSaved: () => void;
 }
 
 /**
  * Live impeller current. The headline is always the live reading; under 1 A
  * the impeller is idle, and the tile adds what it ran at over the last
  * completed cycle (ampsLastCycle, matched by parameterName) for context.
+ * The header carries the impeller selection buttons — set only from here.
  */
-export default function AmpsPanel({ clientId, amps, ampsLastCycle, selected, plcConnected, lastScanAt }: LiveProps) {
+export default function AmpsPanel({
+  clientId, amps, ampsLastCycle, selected, plcConnected, lastScanAt, onImpellersSaved,
+}: LiveProps) {
   const [open, setOpen] = useState(false);
   const [impeller, setImpeller] = useState<number | null>(null);
   // An older gateway orders amps[] by text (1, 10, 2 …), so sort by number.
@@ -148,8 +141,11 @@ export default function AmpsPanel({ clientId, amps, ampsLastCycle, selected, plc
 
   return (
     <Box>
-      <Typography variant="h6" fontWeight={700} mb={0.5}>Impeller Current</Typography>
-      <SelectedImpellersNote selected={selected} />
+      <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1.5}>
+        <Typography variant="h6" fontWeight={700}>Impeller Current</Typography>
+        {/* Absent from a gateway too old to report its selection; it cannot take a save either. */}
+        {selected && <ImpellerSelector clientId={clientId} selected={selected} onSaved={onImpellersSaved} />}
+      </Box>
       {!plcConnected && (
         <PlcWarning>
           PLC disconnected. Showing the last values read at {formatPlantDateTime(lastScanAt)}. These are not live.

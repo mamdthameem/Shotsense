@@ -23,9 +23,14 @@ interface FilterBody {
 }
 
 // "filter-result" reopens one saved calculation by id (GET /api/admin/filter/{id}), so a page
-// refresh shows the same result without computing it again.
-type View = "live" | "trends" | "filter" | "filter-result" | "amps-by-cycle" | "filter-amps";
-const VIEWS: ReadonlySet<string> = new Set<View>(["live", "trends", "filter", "filter-result", "amps-by-cycle", "filter-amps"]);
+// refresh shows the same result without computing it again. "set-impellers" is the only write:
+// PUT /api/admin/settings/impellers — which impellers the site includes is chosen here, in the
+// cloud, never on the gateway dashboard (decided 2026-10-13).
+type View = "live" | "trends" | "filter" | "filter-result" | "amps-by-cycle" | "filter-amps" | "set-impellers";
+const VIEWS: ReadonlySet<string> = new Set<View>([
+  "live", "trends", "filter", "filter-result", "amps-by-cycle", "filter-amps", "set-impellers",
+]);
+const MAX_IMPELLERS = 10;
 const TREND_BUCKETS: ReadonlySet<string> = new Set(["auto", "hour", "day", "month"]);
 
 interface ProxyRequest {
@@ -35,6 +40,7 @@ interface ProxyRequest {
   filterBody?: FilterBody;
   impeller?: number;   // amps-by-cycle
   requestId?: number;  // filter-result, filter-amps
+  selected?: number[]; // set-impellers
 }
 
 // Network-level failures are split out beyond the historic "unreachable" so the
@@ -71,6 +77,8 @@ const FETCH_TIMEOUT_MS: Record<View, number> = {
   "filter-result": 15000,
   "amps-by-cycle": 15000,
   "filter-amps": 15000,
+  // Saving recalculates the energy of every recorded cycle before the gateway answers.
+  "set-impellers": 60000,
 };
 // A reply bigger than this is refused rather than relayed (a callable response
 // has to fit in the function's memory and Firebase's response size limit).
@@ -84,8 +92,9 @@ const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 52
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
  * stored): looks up the client's address + API key in the registry, calls
- * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps}
- * over HTTPS, and returns the JSON as-is. Reachability problems come back as
+ * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps|settings/impellers}
+ * over HTTPS, and returns the JSON as-is. Any cloud admin may call it — every
+ * admin has the same access, including the one write (set-impellers). Reachability problems come back as
  * { ok: false } rather than errors so the dashboard can render a clear
  * "client unreachable" state.
  */
@@ -172,10 +181,12 @@ function eventType(result: ProxyResult): ClientEvent["type"] {
 function buildRequest(
   client: ClientDoc,
   view: View,
-  { trendsQuery, filterBody, impeller, requestId }: ProxyRequest
-): { url: string; method: "GET" | "POST"; body?: string } {
+  { trendsQuery, filterBody, impeller, requestId, selected }: ProxyRequest
+): { url: string; method: "GET" | "POST" | "PUT"; body?: string } {
   let path: string = view;
-  if (view === "amps-by-cycle") {
+  if (view === "set-impellers") {
+    path = "settings/impellers";
+  } else if (view === "amps-by-cycle") {
     if (!Number.isInteger(impeller) || impeller! < 1 || impeller! > 10) {
       throw new HttpsError("invalid-argument", "amps-by-cycle requires impeller 1–10.");
     }
@@ -199,6 +210,16 @@ function buildRequest(
       "This client is set to plain HTTP, which would send the API key unencrypted. " +
         "Turn on HTTPS for it (a Cloudflare tunnel address works)."
     );
+  }
+
+  if (view === "set-impellers") {
+    const list = Array.isArray(selected) ? selected : [];
+    const valid = list.length > 0 && list.every((n) => Number.isInteger(n) && n >= 1 && n <= MAX_IMPELLERS)
+      && new Set(list).size === list.length;
+    if (!valid) {
+      throw new HttpsError("invalid-argument", `set-impellers requires a list of distinct impeller numbers 1–${MAX_IMPELLERS}.`);
+    }
+    return { url: url.toString(), method: "PUT", body: JSON.stringify({ selected: [...list].sort((a, b) => a - b) }) };
   }
 
   if (view === "amps-by-cycle") {
@@ -243,7 +264,7 @@ async function fetchGateway(
   url: string,
   apiKey: string,
   timeoutMs: number,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   body?: string
 ): Promise<ProxyResult> {
   const parsedUrl = new URL(url);

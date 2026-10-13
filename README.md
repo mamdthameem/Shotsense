@@ -36,6 +36,10 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   change each other's view. A refresh reopens the result by id (`GET /api/admin/filter/{id}`)
   without recomputing. The gateway no longer sends `section2` in `/live` (2026-10-12); the page
   drops it even from an older gateway.
+- **Impeller selection is decided here, and only here.** The buttons in a client's Impeller Current
+  header (any admin) save through `gatewayProxy` view `set-impellers` →
+  `PUT /api/admin/settings/impellers`; the gateway recalculates all recorded energy before it
+  answers. The gateway's own dashboard has no buttons for it (since 2026-10-13).
 - **"Unreachable" means unreachable.** A gateway that answers, even with an error, counts as
   reached; only a network failure, or a tunnel that cannot reach the gateway behind it, marks a
   client unreachable in the client list.
@@ -55,55 +59,37 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 - `clients/{clientId}` — name, staticIp (IP or hostname), port, useTls, hostnameOverride,
   adminApiKey, licenseKey, licenseExpiresAt, graceDays, suspended, lastLicenseCheckAt,
   lastAdminContactAt, lastContactStatus, recentEvents (last 20).
-- `admins/{uid}` — if this document exists, that login is an admin. **Created by hand in the
-  Firebase console. There is no sign-up.**
+- `admins/{uid}` — if this document exists, that login is a cloud admin. **Created by hand in the
+  Firebase console. There is no sign-up.** Every cloud admin has the same access: clients, keys,
+  impeller selection and client logins. There is no higher level.
 - `clientUsers/{uid}` — the readable copy of a client company's logins: name, email, clientId,
-  role, disabled. Written only by the Cloud Functions below; readable only by a super admin.
+  role, disabled. Written only by the Cloud Functions below; readable by any cloud admin.
   **Access itself never comes from here** — it comes from the custom claims on the account.
 
 ## Client logins
 
-A client company's own people sign in with Firebase Authentication (email and password). Each
-account carries two **custom claims**, which travel inside the signed ID token so any server can
-trust them without a database read:
+A client company's own people sign in **to their own gateway's dashboard** with Firebase
+Authentication (email and password). They never sign in to this website, which turns away any
+account without an `admins/{uid}` document. Each account carries two **custom claims**, which
+travel inside the signed ID token so the gateway can trust them without a database read:
 
 | Claim | Value | Meaning |
 |---|---|---|
-| `clientId` | a client's id | the company whose data this person may see |
-| `role` | `admin` or `viewer` | `admin` may change settings; `viewer` may only look |
-| `superAdmin` | `true` | JC: may manage every client's logins. Never set on a client user |
+| `clientId` | a client's id | the company whose gateway this person may use; any other gateway refuses them |
+| `role` | `admin` or `viewer` | shown on the gateway; kept for gateway settings that only an admin may change |
 
 **No password is ever visible to anyone here.** An account is created without one, and the person
-sets their own from a link Firebase emails them. Nobody — including the super admin — can read or
+sets their own from a link Firebase emails them. Nobody — including a cloud admin — can read or
 choose someone else's password; the only thing available is "send them a fresh link".
 
 `clientUsers/{uid}` mirrors the account for listing, because Firebase Auth cannot answer "who
 belongs to client X". The claims decide access; the document is only for display.
 
-### Super admin
-
-The `superAdmin` claim is granted by a script, never from the website, so it needs the project's
-own credentials:
-
-1. Firebase console → **Project settings** → **Service accounts** → **Generate new private key**.
-   Keep the JSON off the repo (it is a master key to the project).
-2. Point `GOOGLE_APPLICATION_CREDENTIALS` at it and run:
-
-```powershell
-$env:GOOGLE_APPLICATION_CREDENTIALS = "C:\keys\shotsense-service-account.json"
-npm --prefix functions run grant-super-admin -- jc@example.com
-```
-
-3. Sign out and back in on the dashboard — a claim only reaches a session when its token is
-   reissued. The **Users** button then appears on each client's dashboard.
-
-`-- --revoke` takes the claim away again. The account must already exist in Authentication → Users.
-
 ### Managing users
 
-A super admin opens a client's dashboard → **Users**: list, add, change role, disable or re-enable,
-and send a fresh password link. Each action is a callable Cloud Function that refuses anyone
-without the `superAdmin` claim:
+Any cloud admin opens a client's dashboard → **Users**: list, add, change role, disable or
+re-enable, and send a fresh password link. Each action is a callable Cloud Function that refuses
+anyone who is not a cloud admin, and refuses to touch a cloud admin's own account:
 
 | Function | Does |
 |---|---|

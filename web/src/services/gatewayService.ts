@@ -29,11 +29,12 @@ export function describeGatewayFailure(result: Extract<ProxyResult<unknown>, { o
 
 interface ProxyRequest {
   clientId: string;
-  view: 'live' | 'trends' | 'filter' | 'filter-result' | 'amps-by-cycle' | 'filter-amps';
+  view: 'live' | 'trends' | 'filter' | 'filter-result' | 'amps-by-cycle' | 'filter-amps' | 'set-impellers';
   trendsQuery?: GatewayTrendsQuery;
   filterBody?: GatewayFilterRequest;
   impeller?: number;
   requestId?: number;
+  selected?: number[];
 }
 
 const proxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy');
@@ -119,6 +120,19 @@ function section2Result(data: GatewaySection2 | null): ProxyResult<GatewaySectio
   return section2
     ? { ok: true, data: section2 }
     : { ok: false, reason: 'gateway-error', message: 'Gateway returned an empty filter result.' };
+}
+
+/**
+ * Saves which impellers the client's site includes — the only place this can be changed. The
+ * gateway recalculates the energy of every recorded cycle before it answers, so a success means
+ * the new figures are already in place. Same long wait as a filter calculation.
+ */
+export async function saveImpellerSelection(
+  clientId: string,
+  selected: number[]
+): Promise<ProxyResult<{ selected: number[]; maxImpellers: number }>> {
+  return (await filterProxy({ clientId, view: 'set-impellers', selected })).data as
+    ProxyResult<{ selected: number[]; maxImpellers: number }>;
 }
 
 /** One impeller's average current for every completed cycle (live impeller tile chart). */

@@ -11,7 +11,6 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import MailOutlineIcon from '@mui/icons-material/MailOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import { useClients } from '../contexts/ClientsContext';
 import {
   changeUserRole, createClientUser, describeCallFailure, listClientUsers, sendPasswordReset,
@@ -116,7 +115,6 @@ function AddUserDialog({ open, clientId, onClose, onCreated }: {
 export const ClientUsers: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isSuperAdmin } = useAuth();
   const { clients, loading: clientsLoading } = useClients();
   const client = clients.find(c => c.id === id) ?? null;
 
@@ -140,7 +138,8 @@ export const ClientUsers: React.FC = () => {
     }
   }, [id]);
 
-  useEffect(() => { if (isSuperAdmin) void load(); else setLoading(false); }, [isSuperAdmin, load]);
+  // Reached only through ProtectedRoute, so the viewer is a cloud admin; every admin may manage logins.
+  useEffect(() => { void load(); }, [load]);
 
   /** Runs one action for a row, then reloads so the table shows what the server now holds. */
   const act = async (uid: string, action: () => Promise<void>) => {
@@ -158,16 +157,6 @@ export const ClientUsers: React.FC = () => {
 
   if (clientsLoading) {
     return <Box display="flex" justifyContent="center" py={8}><CircularProgress /></Box>;
-  }
-
-  if (!isSuperAdmin) {
-    return (
-      <Container maxWidth="md" sx={{ py: 3 }}>
-        <Alert severity="info" sx={{ borderRadius: 3 }}>
-          Only a super admin can manage client logins.
-        </Alert>
-      </Container>
-    );
   }
 
   if (!client) {

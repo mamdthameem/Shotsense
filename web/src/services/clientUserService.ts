@@ -5,7 +5,7 @@ import type { ClientUser, ClientUserRole } from '../types';
 
 /**
  * Managing a client company's logins. Every privileged step runs in a Cloud Function that
- * requires the superAdmin claim; this file only calls them and reports what came back.
+ * requires a cloud admin (any of them); this file only calls them and reports what came back.
  *
  * Passwords are never part of any of it: an account is created without one, and the person sets
  * their own from a link Firebase emails them.
@@ -23,7 +23,7 @@ const changeRoleFn   = call<{ uid: string; role: ClientUserRole }, { uid: string
 /** A callable's error as one line an admin can act on. */
 export function describeCallFailure(err: unknown): string {
   const { code, message } = (err ?? {}) as { code?: string; message?: string };
-  if (code === 'functions/permission-denied') return 'Only a super admin can manage client users.';
+  if (code === 'functions/permission-denied') return 'Only a cloud admin can manage client users.';
   if (code === 'functions/unauthenticated') return 'Your session has expired. Sign in again.';
   if (code === 'functions/already-exists') return 'That email already has an account.';
   return message || 'Something went wrong. Try again.';
@@ -34,7 +34,7 @@ export function describeCallFailure(err: unknown): string {
  *
  * It is sent from the browser because Firebase's own mailer is the only one this project has,
  * and only the client SDK can trigger it — the Admin SDK can mint the link but not post it. The
- * callables return that link too, so a super admin can pass it on when the email does not arrive.
+ * callables return that link too, so an admin can pass it on when the email does not arrive.
  */
 async function emailPasswordLink(email: string): Promise<boolean> {
   try {

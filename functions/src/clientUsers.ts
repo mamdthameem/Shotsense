@@ -2,11 +2,13 @@ import { getAuth, UserRecord } from "firebase-admin/auth";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
-import { assertSuperAdmin } from "./lib/admin";
+import { assertAdmin, isCloudAdmin } from "./lib/admin";
 import { clientRef, isValidClientId } from "./lib/registry";
 
 /**
- * Logins for a client company's own people, managed by the super admin.
+ * Logins for a client company's own people, managed by the cloud admins (any of them: every cloud
+ * admin has the same access). These people sign in to their own gateway's dashboard only; the
+ * cloud website stays admins-only.
  *
  * Who a user is lives in two places, each for a reason:
  *   - **Custom claims on the Firebase account** (`clientId`, `role`) are what a server trusts.
@@ -20,7 +22,7 @@ import { clientRef, isValidClientId } from "./lib/registry";
  * Every function here writes both, claims first.
  *
  * **No password ever passes through this code.** Accounts are created without one, and the person
- * sets their own through a Firebase password link. Nobody — not even the super admin — can read
+ * sets their own through a Firebase password link. Nobody — not even a cloud admin — can read
  * or choose someone else's password.
  */
 
@@ -92,9 +94,9 @@ async function requireClient(clientId: unknown): Promise<string> {
 }
 
 /**
- * Loads a managed client user, by uid. Refuses accounts this screen does not own: a super admin
- * (so the roster cannot be used to lock JC out of his own project) and any account without a
- * clientId claim (an admin account, or one created by hand in the console).
+ * Loads a managed client user, by uid. Refuses accounts this screen does not own: a cloud admin
+ * (so the roster cannot be used to lock an admin out of the project) and any account without a
+ * clientId claim (one created by hand in the console).
  */
 async function requireClientUser(uid: unknown): Promise<UserRecord> {
   const id = requireString(uid, "uid");
@@ -105,8 +107,8 @@ async function requireClientUser(uid: unknown): Promise<UserRecord> {
     throw new HttpsError("not-found", "No such user.");
   }
   const claims = user.customClaims ?? {};
-  if (claims.superAdmin === true) {
-    throw new HttpsError("failed-precondition", "That is a super admin account; manage it outside this screen.");
+  if (await isCloudAdmin(user.uid)) {
+    throw new HttpsError("failed-precondition", "That is a cloud admin account; manage it outside this screen.");
   }
   if (typeof claims.clientId !== "string") {
     throw new HttpsError("failed-precondition", "That account does not belong to a client.");
@@ -141,7 +143,7 @@ function toView(user: UserRecord, doc: Partial<ClientUserDoc> | undefined): Clie
  * arrive.
  */
 export const createClientUser = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
 
   const { email: rawEmail, name: rawName, clientId: rawClientId, role: rawRole } = request.data ?? {};
   const email = requireEmail(rawEmail);
@@ -181,7 +183,7 @@ export const createClientUser = onCall(CALL_OPTIONS, async (request) => {
 
 /** Every login belonging to one client. */
 export const listClientUsers = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
   const clientId = await requireClient((request.data ?? {}).clientId);
 
   const snap = await getFirestore().collection(USERS).where("clientId", "==", clientId).get();
@@ -209,7 +211,7 @@ export const listClientUsers = onCall(CALL_OPTIONS, async (request) => {
 
 /** Blocks a login immediately: disabled in Auth, and existing sessions revoked. */
 export const disableClientUser = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
   const user = await requireClientUser((request.data ?? {}).uid);
 
   await getAuth().updateUser(user.uid, { disabled: true });
@@ -224,7 +226,7 @@ export const disableClientUser = onCall(CALL_OPTIONS, async (request) => {
 });
 
 export const enableClientUser = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
   const user = await requireClientUser((request.data ?? {}).uid);
 
   await getAuth().updateUser(user.uid, { disabled: false });
@@ -238,10 +240,10 @@ export const enableClientUser = onCall(CALL_OPTIONS, async (request) => {
 
 /**
  * A password-reset link for a client user. The dashboard has Firebase send the email as well;
- * this link is what the super admin can pass on by hand when it does not arrive.
+ * this link is what a cloud admin can pass on by hand when it does not arrive.
  */
 export const sendPasswordReset = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
   const email = requireEmail((request.data ?? {}).email);
 
   let user: UserRecord;
@@ -257,7 +259,7 @@ export const sendPasswordReset = onCall(CALL_OPTIONS, async (request) => {
 
 /** Moves a user between admin and viewer. */
 export const changeUserRole = onCall(CALL_OPTIONS, async (request) => {
-  assertSuperAdmin(request);
+  await assertAdmin(request);
   const { uid, role: rawRole } = request.data ?? {};
   const user = await requireClientUser(uid);
   const role = requireRole(rawRole);

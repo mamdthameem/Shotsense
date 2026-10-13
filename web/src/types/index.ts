@@ -44,7 +44,6 @@ export interface AdminUser {
   uid: string;
   email: string;
   name: string;          // display label derived from the email
-  isSuperAdmin: boolean; // the superAdmin custom claim: may manage client logins
 }
 
 // ── Client logins (Firebase Auth + clientUsers/{uid}) ────────────────────────
