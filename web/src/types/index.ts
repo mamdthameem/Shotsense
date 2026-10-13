@@ -36,6 +36,12 @@ export interface Client {
   recentEvents: ClientEvent[];
   createdAt: Date | null;
   updatedAt: Date | null;
+  tunnelToken: string | null;  // Cloudflare tunnel token; goes into the installation code only
+  // Summary of the client's tag file. The file itself is never readable from the browser.
+  siteProfileVersion: string | null;
+  siteProfileTagCount: number | null;
+  siteProfileFileName: string | null;
+  siteProfileUploadedAt: Date | null;
 }
 
 // ── Admin account (Firebase Auth + admins/{uid}) ─────────────────────────────

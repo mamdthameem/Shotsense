@@ -1,8 +1,7 @@
-import { createHash, timingSafeEqual } from "crypto";
 import { Timestamp } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
-import { appendEvent, ClientDoc, clientRef, deriveLicenseStatus, isValidClientId } from "./lib/registry";
+import { appendEvent, ClientDoc, clientRef, deriveLicenseStatus, isValidClientId, keysMatch } from "./lib/registry";
 
 /**
  * License validation endpoint called by each client installation:
@@ -60,6 +59,9 @@ export const licenseCheck = onRequest(
       expiresAt: client.licenseExpiresAt?.toDate().toISOString() ?? null,
       graceDays: client.graceDays ?? 0,
       serverTime: now.toISOString(),
+      // The version of the client's tag file. A gateway running an older one fetches the new one
+      // from siteProfile and restarts on it — no extra calls between uploads.
+      siteProfileVersion: client.siteProfileVersion ?? null,
     };
 
     if (status === "active" || status === "grace") {
@@ -80,11 +82,3 @@ export const licenseCheck = onRequest(
     res.status(402).json(body);
   }
 );
-
-/** Constant-time key comparison (hashes normalize length first). */
-function keysMatch(provided: string, stored: string): boolean {
-  if (!stored) return false;
-  const a = createHash("sha256").update(provided).digest();
-  const b = createHash("sha256").update(stored).digest();
-  return timingSafeEqual(a, b);
-}

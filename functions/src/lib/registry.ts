@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "crypto";
 import { getFirestore, DocumentReference, Timestamp } from "firebase-admin/firestore";
 
 export type ContactStatus = "ok" | "unreachable" | "auth-failed";
@@ -32,6 +33,15 @@ export interface ClientDoc {
   lastAdminContactAt: Timestamp | null;
   lastContactStatus: ContactStatus | null;
   recentEvents: ClientEvent[];
+  // The Cloudflare tunnel token for this client's PC. A credential: it goes into the installation
+  // code and nowhere else. Admin-only, like the keys above.
+  tunnelToken?: string | null;
+  // Summary of the client's tag file (the file itself is in siteProfiles/{clientId}, never readable
+  // from a browser). siteProfileVersion is also what licenseCheck reports to the gateway.
+  siteProfileVersion?: string | null;
+  siteProfileTagCount?: number | null;
+  siteProfileFileName?: string | null;
+  siteProfileUploadedAt?: Timestamp | null;
 }
 
 export type LicenseStatus = "active" | "grace" | "expired" | "suspended";
@@ -56,6 +66,14 @@ export function deriveLicenseStatus(client: ClientDoc, now: Date): LicenseStatus
   const graceMs = (client.graceDays ?? 0) * 24 * 60 * 60 * 1000;
   if (now.getTime() <= expiresAt.getTime() + graceMs) return "grace";
   return "expired";
+}
+
+/** Constant-time key comparison (hashes normalize length first). */
+export function keysMatch(provided: string, stored: string): boolean {
+  if (!stored) return false;
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(stored).digest();
+  return timingSafeEqual(a, b);
 }
 
 /** Append an event to the capped recentEvents list (newest last). */

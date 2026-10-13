@@ -29,6 +29,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Each client's tag file. Written only by uploadSiteProfile, read only by the siteProfile
+    // function for that client's gateway. No browser — not even an admin's — ever reads it; the
+    // dashboard shows only the summary kept on clients/{clientId}.
+    match /siteProfiles/{clientId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -40,6 +40,16 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   header (any admin) save through `gatewayProxy` view `set-impellers` →
   `PUT /api/admin/settings/impellers`; the gateway recalculates all recorded energy before it
   answers. The gateway's own dashboard has no buttons for it (since 2026-10-13).
+- **One installation code per client** (Edit → **Copy installation code**, `web/src/utils/installCode.ts`):
+  keys, licence and tag-file addresses and the Cloudflare tunnel token, pasted once into the gateway
+  installer. Offered only while the dialog shows exactly what is saved. The tunnel token is stored on
+  `clients/{id}` with the keys (admins only). Format: the gateway repo's `INSTALLATION-CODE.md`.
+- **Each client's tag file lives here, and only here** (Edit → **Tag Settings File**). The PLC tag list
+  differs per client and stays private: `uploadSiteProfile` keeps only the five tag sections and stores
+  them in `siteProfiles/{clientId}`, which no browser can read; the dialog shows file name, tag count
+  and date. The gateway fetches it with its licence key from `siteProfile` at every start (it keeps an
+  encrypted copy for starts without internet), and `licenseCheck` returns `siteProfileVersion`, so a new
+  upload reaches a running gateway within the hour. Nothing per request, nothing per user.
 - **"Unreachable" means unreachable.** A gateway that answers, even with an error, counts as
   reached; only a network failure, or a tunnel that cannot reach the gateway behind it, marks a
   client unreachable in the client list.
@@ -51,14 +61,17 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 | Path | What it is |
 |---|---|
 | `web/` | Admin website (Vite + React + TypeScript + MUI) |
-| `functions/` | Cloud Functions `licenseCheck` (HTTP), `gatewayProxy` and the client-user callables, region `asia-south1` |
-| `firestore.rules` | Only admins can use `clients/`; `admins/` and `clientUsers/` can only be changed from the console or a function |
+| `functions/` | Cloud Functions `licenseCheck` and `siteProfile` (HTTP, called by gateways with their licence key), `gatewayProxy`, `uploadSiteProfile` and the client-user callables, region `asia-south1` |
+| `firestore.rules` | Only admins can use `clients/`; `admins/` and `clientUsers/` can only be changed from the console or a function; `siteProfiles/` is closed to every browser |
 
 ## Firestore data
 
 - `clients/{clientId}` — name, staticIp (IP or hostname), port, useTls, hostnameOverride,
-  adminApiKey, licenseKey, licenseExpiresAt, graceDays, suspended, lastLicenseCheckAt,
-  lastAdminContactAt, lastContactStatus, recentEvents (last 20).
+  adminApiKey, licenseKey, tunnelToken, licenseExpiresAt, graceDays, suspended, lastLicenseCheckAt,
+  lastAdminContactAt, lastContactStatus, recentEvents (last 20), and the tag file's summary
+  (siteProfileVersion, siteProfileTagCount, siteProfileFileName, siteProfileUploadedAt).
+- `siteProfiles/{clientId}` — the client's tag file (`json`, `version`, `tagCount`, `fileName`). Written
+  by `uploadSiteProfile`, read by `siteProfile` for that client's gateway. No browser rule allows it.
 - `admins/{uid}` — if this document exists, that login is a cloud admin. **Created by hand in the
   Firebase console. There is no sign-up.** Every cloud admin has the same access: clients, keys,
   impeller selection and client logins. There is no higher level.

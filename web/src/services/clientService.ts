@@ -37,6 +37,11 @@ const fromSnapshot = (id: string, data: Record<string, unknown>): Client => ({
   recentEvents: (data.recentEvents as ClientEvent[]) ?? [],
   createdAt: toDateOrNull(data.createdAt),
   updatedAt: toDateOrNull(data.updatedAt),
+  tunnelToken: (data.tunnelToken as string | null) ?? null,
+  siteProfileVersion: (data.siteProfileVersion as string | null) ?? null,
+  siteProfileTagCount: (data.siteProfileTagCount as number | null) ?? null,
+  siteProfileFileName: (data.siteProfileFileName as string | null) ?? null,
+  siteProfileUploadedAt: toDateOrNull(data.siteProfileUploadedAt),
 });
 
 /** Live subscription to the whole registry (small collection, admin-only). */
@@ -63,6 +68,7 @@ export interface ClientInput {
   licenseExpiresAt: Date | null;
   graceDays: number;
   suspended: boolean;
+  tunnelToken: string | null;
 }
 
 const inputToDoc = (input: ClientInput) => ({

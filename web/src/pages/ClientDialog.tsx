@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     Box,
     Typography,
@@ -15,13 +15,17 @@ import {
     InputAdornment,
     Tooltip,
     Alert,
+    CircularProgress,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 import type { Client } from '../types';
 import { addClient, updateClient, type ClientInput } from '../services/clientService';
+import { uploadSiteProfile } from '../services/siteProfileService';
 import { generateClientId, generateKey } from '../utils/keys';
-import { licenseCheckUrl } from '../firebase';
+import { buildInstallCode } from '../utils/installCode';
+import { formatPlantDateTime } from '../utils/formatters';
 
 interface Props {
     open: boolean;
@@ -40,6 +44,14 @@ interface FormState {
     licenseExpiresAt: string; // yyyy-mm-dd
     graceDays: string;
     suspended: boolean;
+    tunnelToken: string;
+}
+
+/** The tag file's summary as the dialog shows it. The file's contents never reach the browser. */
+interface ProfileSummary {
+    fileName: string | null;
+    tagCount: number | null;
+    uploadedAt: Date | null;
 }
 
 const emptyForm = (): FormState => ({
@@ -53,6 +65,7 @@ const emptyForm = (): FormState => ({
     licenseExpiresAt: '',
     graceDays: '0',
     suspended: false,
+    tunnelToken: '',
 });
 
 const fromClient = (c: Client): FormState => ({
@@ -66,28 +79,59 @@ const fromClient = (c: Client): FormState => ({
     licenseExpiresAt: c.licenseExpiresAt ? c.licenseExpiresAt.toISOString().split('T')[0] : '',
     graceDays: String(c.graceDays ?? 0),
     suspended: c.suspended,
+    tunnelToken: c.tunnelToken ?? '',
 });
 
-/** Add/Edit client dialog — registry fields, keys, and the config snippet the
- *  client installation must be configured with. */
+const sameForm = (a: FormState | null, b: FormState) => a !== null && JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Add/Edit client dialog: registry fields, keys, the Cloudflare tunnel token, the client's tag file,
+ * and the one installation code that carries all of it to the client's PC.
+ *
+ * The code is offered only while the form matches what is saved, so a copied code always holds the
+ * keys the cloud will accept. Saving keeps the dialog open on the code.
+ */
 export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) => {
     const [form, setForm] = useState<FormState>(emptyForm());
     const [newId, setNewId] = useState<string>('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // What the cloud holds for this client right now; null until a new client is first saved.
+    const [savedForm, setSavedForm] = useState<FormState | null>(null);
+    const [savedNote, setSavedNote] = useState<string | null>(null);
+    const [profile, setProfile] = useState<ProfileSummary>({ fileName: null, tagCount: null, uploadedAt: null });
+    const [uploading, setUploading] = useState(false);
+    const [profileNote, setProfileNote] = useState<{ severity: 'success' | 'error'; text: string } | null>(null);
+    const [copied, setCopied] = useState(false);
+    const fileInput = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         if (open) {
-            setForm(editingClient ? fromClient(editingClient) : emptyForm());
+            const initial = editingClient ? fromClient(editingClient) : emptyForm();
+            setForm(initial);
+            setSavedForm(editingClient ? initial : null);
             setNewId(editingClient ? '' : generateClientId());
+            setProfile({
+                fileName: editingClient?.siteProfileFileName ?? null,
+                tagCount: editingClient?.siteProfileTagCount ?? null,
+                uploadedAt: editingClient?.siteProfileUploadedAt ?? null,
+            });
             setError(null);
+            setSavedNote(null);
+            setProfileNote(null);
+            setCopied(false);
         }
     }, [open, editingClient]);
 
     const clientId = editingClient?.id ?? newId;
+    const isSaved = savedForm !== null;
+    const unsaved = !sameForm(savedForm, form);
 
-    const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
         setForm(prev => ({ ...prev, [key]: value }));
+        setSavedNote(null);
+        setCopied(false);
+    };
 
     const copy = (value: string) => {
         void navigator.clipboard.writeText(value);
@@ -130,22 +174,68 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
             licenseExpiresAt: new Date(form.licenseExpiresAt),
             graceDays: Math.max(0, parseInt(form.graceDays, 10) || 0),
             suspended: form.suspended,
+            tunnelToken: form.tunnelToken.trim() || null,
         };
         setSaving(true);
         setError(null);
         try {
-            if (editingClient) {
-                await updateClient(editingClient.id, input);
+            if (isSaved) {
+                await updateClient(clientId, input);
             } else {
-                await addClient(newId, input);
+                await addClient(clientId, input);
             }
-            onClose();
+            // The form now shows exactly what was stored (a pasted URL became host, port and HTTPS),
+            // which is what makes the installation code below safe to copy.
+            const stored: FormState = {
+                ...form,
+                name: input.name,
+                staticIp: host,
+                port: String(port),
+                useTls,
+                hostnameOverride: input.hostnameOverride ?? '',
+                graceDays: String(input.graceDays),
+                tunnelToken: input.tunnelToken ?? '',
+            };
+            setForm(stored);
+            setSavedForm(stored);
+            setSavedNote('Saved. The installation code below is ready to copy.');
         } catch (err) {
             setError((err as Error).message);
         } finally {
             setSaving(false);
         }
     };
+
+    const handleProfileFile = async (file: File | undefined) => {
+        if (!file) return;
+        setUploading(true);
+        setProfileNote(null);
+        try {
+            const result = await uploadSiteProfile(clientId, file);
+            setProfile({ fileName: result.fileName, tagCount: result.tagCount, uploadedAt: new Date() });
+            setProfileNote({
+                severity: 'success',
+                text: `Uploaded: ${result.tagCount} tags. The gateway picks it up at its next start, or within an hour while running.` +
+                    (result.ignored.length ? ` Not stored (not part of a tag file): ${result.ignored.join(', ')}.` : ''),
+            });
+        } catch (err) {
+            setProfileNote({ severity: 'error', text: (err as Error).message || 'The upload failed.' });
+        } finally {
+            setUploading(false);
+            if (fileInput.current) fileInput.current.value = '';
+        }
+    };
+
+    const installCode = isSaved && !unsaved
+        ? buildInstallCode({
+            clientId,
+            clientName: form.name.trim(),
+            publicHostname: form.hostnameOverride.trim() || form.staticIp.trim(),
+            licenseKey: form.licenseKey,
+            adminApiKey: form.adminApiKey,
+            tunnelToken: form.tunnelToken.trim() || null,
+        })
+        : null;
 
     const keyField = (label: string, key: 'licenseKey' | 'adminApiKey') => (
         <TextField
@@ -174,16 +264,6 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
         />
     );
 
-    const configSnippet = [
-        `"License": {`,
-        `  "CheckUrl": "${licenseCheckUrl(clientId)}",`,
-        `  "Key": "${form.licenseKey}"`,
-        `},`,
-        `"Admin": {`,
-        `  "ApiKey": "${form.adminApiKey}"`,
-        `}`,
-    ].join('\n');
-
     return (
         <Dialog
             open={open}
@@ -198,11 +278,12 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
             }}
         >
             <DialogTitle sx={{ fontWeight: 800, color: (theme) => theme.palette.text.primary }}>
-                {editingClient ? 'Edit Client' : 'Add New Client'}
+                {isSaved ? 'Edit Client' : 'Add New Client'}
             </DialogTitle>
             <DialogContent>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 2 }}>
                     {error && <Alert severity="error">{error}</Alert>}
+                    {savedNote && <Alert severity="success">{savedNote}</Alert>}
 
                     <TextField
                         label="Client Name"
@@ -251,6 +332,19 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                             unencrypted — turn HTTPS on (a Cloudflare tunnel address works).
                         </Alert>
                     )}
+                    <TextField
+                        label="Cloudflare Tunnel Token (optional)"
+                        fullWidth
+                        multiline
+                        minRows={2}
+                        value={form.tunnelToken}
+                        onChange={(e) => set('tunnelToken', e.target.value.trim())}
+                        placeholder="eyJhIjoi…"
+                        helperText="Cloudflare Zero Trust → Networks → Tunnels → this client's tunnel: the long value after
+                            'cloudflared.exe service install'. Set its public hostname to the Gateway Address above, service
+                            http://localhost:5200. Leave empty for a plant-network-only install."
+                        InputProps={{ sx: { fontFamily: 'var(--font-mono)', fontSize: '0.72rem', wordBreak: 'break-all' } }}
+                    />
 
                     <Divider />
 
@@ -291,38 +385,104 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                         </Box>
                     </Box>
 
+                    <Divider />
+
+                    {/* The tag file: this client's PLC tag list and recording rules. Uploaded here, fetched
+                        by the gateway with its licence key. Only a summary is ever shown. */}
                     <Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                            <Typography variant="subtitle2" fontWeight={700}>
-                                Client Installation Config
+                        <Typography variant="subtitle2" fontWeight={700} mb={1}>Tag Settings File</Typography>
+                        {!isSaved ? (
+                            <Typography variant="body2" color="text.secondary">
+                                Save the client first, then upload its tag file here.
                             </Typography>
-                            <Tooltip title="Copy snippet">
-                                <IconButton size="small" onClick={() => copy(configSnippet)}>
-                                    <ContentCopyIcon fontSize="small" />
-                                </IconButton>
-                            </Tooltip>
-                        </Box>
-                        <Box
-                            component="pre"
-                            sx={{
-                                m: 0,
-                                p: 2,
-                                borderRadius: 2,
-                                border: (theme) => `1px solid ${theme.palette.divider}`,
-                                backgroundColor: (theme) => theme.palette.mode === 'dark'
-                                    ? 'rgba(255,255,255,0.03)'
-                                    : 'rgba(0,0,0,0.03)',
-                                fontFamily: 'var(--font-mono)',
-                                fontSize: '0.72rem',
-                                overflowX: 'auto',
-                                userSelect: 'text',
-                            }}
-                        >
-                            {configSnippet}
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                            Client ID: <code>{clientId}</code> — paste these values into the client installation's settings.
+                        ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" color={profile.tagCount ? 'text.primary' : 'warning.main'}>
+                                    {profile.tagCount
+                                        ? `${profile.fileName ?? 'Tag file'} · ${profile.tagCount} tags${profile.uploadedAt ? ` · uploaded ${formatPlantDateTime(profile.uploadedAt)}` : ''}`
+                                        : 'No tag file yet. The gateway cannot record without one.'}
+                                </Typography>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    startIcon={uploading ? <CircularProgress size={14} /> : <UploadFileIcon />}
+                                    disabled={uploading}
+                                    onClick={() => fileInput.current?.click()}
+                                    sx={{ borderRadius: 2, fontWeight: 700 }}
+                                >
+                                    {profile.tagCount ? 'Replace file' : 'Upload file'}
+                                </Button>
+                                <input
+                                    ref={fileInput}
+                                    type="file"
+                                    accept=".json,application/json"
+                                    hidden
+                                    onChange={(e) => void handleProfileFile(e.target.files?.[0])}
+                                />
+                            </Box>
+                        )}
+                        {profileNote && <Alert severity={profileNote.severity} sx={{ mt: 1.5 }}>{profileNote.text}</Alert>}
+                        <Typography variant="caption" color="text.secondary" display="block" mt={1}>
+                            A JSON file with the client's "Tags" list (and optionally ScanIntervalMs, CovRules,
+                            DataCollection, MaintenanceThresholds). Anything else in the file is not stored. Its
+                            contents are never shown here or on the client's PC.
                         </Typography>
+                    </Box>
+
+                    <Divider />
+
+                    {/* The one code pasted into the installer on the client's PC. */}
+                    <Box>
+                        <Typography variant="subtitle2" fontWeight={700} mb={1}>Installation Code</Typography>
+                        {installCode === null ? (
+                            <Typography variant="body2" color="text.secondary">
+                                {isSaved ? 'Save your changes to get the installation code.' : 'Save the client to get its installation code.'}
+                            </Typography>
+                        ) : (
+                            <>
+                                <Box
+                                    sx={{
+                                        p: 1.5,
+                                        borderRadius: 2,
+                                        border: (theme) => `1px solid ${theme.palette.divider}`,
+                                        backgroundColor: (theme) => theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
+                                        fontFamily: 'var(--font-mono)',
+                                        fontSize: '0.68rem',
+                                        wordBreak: 'break-all',
+                                        maxHeight: 96,
+                                        overflowY: 'auto',
+                                        userSelect: 'all',
+                                    }}
+                                >
+                                    {installCode}
+                                </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 1.5, flexWrap: 'wrap' }}>
+                                    <Button
+                                        variant="contained"
+                                        startIcon={<ContentCopyIcon />}
+                                        onClick={() => { copy(installCode); setCopied(true); }}
+                                        sx={{ borderRadius: 2, fontWeight: 700 }}
+                                    >
+                                        {copied ? 'Copied' : 'Copy installation code'}
+                                    </Button>
+                                    <Typography variant="caption" color="text.secondary">
+                                        Paste it into the installer's "Installation code" box. It holds every key for this client:
+                                        share it only with the person installing.
+                                    </Typography>
+                                </Box>
+                                {!profile.tagCount && (
+                                    <Alert severity="warning" sx={{ mt: 1.5 }}>
+                                        Upload the tag file before installing: the gateway fetches it when it starts.
+                                    </Alert>
+                                )}
+                                {!form.tunnelToken.trim() && (
+                                    <Alert severity="info" sx={{ mt: 1.5 }}>
+                                        No tunnel token: the dashboard will be reachable on the plant network only, and this
+                                        website cannot pull from the gateway.
+                                    </Alert>
+                                )}
+                            </>
+                        )}
                     </Box>
                 </Box>
             </DialogContent>
@@ -334,12 +494,12 @@ export const ClientDialog: React.FC<Props> = ({ open, editingClient, onClose }) 
                         transition: 'all 0.3s ease',
                     }}
                 >
-                    Cancel
+                    {isSaved && !unsaved ? 'Close' : 'Cancel'}
                 </Button>
                 <Button
                     variant="contained"
                     onClick={handleSave}
-                    disabled={saving}
+                    disabled={saving || (isSaved && !unsaved)}
                     sx={{ transition: 'all 0.3s ease' }}
                 >
                     {saving ? 'Saving…' : 'Save Client'}

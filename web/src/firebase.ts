@@ -35,3 +35,8 @@ export const functions = getFunctions(app, FUNCTIONS_REGION);
 export function licenseCheckUrl(clientId: string): string {
   return `https://${FUNCTIONS_REGION}-${projectId}.cloudfunctions.net/licenseCheck?clientId=${clientId}`;
 }
+
+/** Where a client's gateway fetches its tag file (SiteProfile:Url). */
+export function siteProfileUrl(clientId: string): string {
+  return `https://${FUNCTIONS_REGION}-${projectId}.cloudfunctions.net/siteProfile?clientId=${clientId}`;
+}
