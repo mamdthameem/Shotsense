@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useState } from 'react';
 import {
   Container, Divider, Box, Typography, IconButton, Tooltip, Button, Chip,
   Alert, CircularProgress, Switch, FormControlLabel, Paper,
@@ -7,7 +7,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MachineStatusTile from '../components/MachineStatusTile';
 import { LifetimeSection, TileGrid } from '../components/LifetimeSection';
 import AmpsPanel from '../components/AmpsPanel';
@@ -15,16 +15,24 @@ import SpareHealthTable from '../components/SpareHealthTable';
 import FilteredParameters, { filterName, type AppliedFilter } from '../components/FilteredParameters';
 import FilterBar from '../components/FilterBar';
 import SectionErrorBoundary from '../components/SectionErrorBoundary';
-import { fetchLive, fetchFilteredCalculation, describeGatewayFailure } from '../services/gatewayService';
+import {
+  fetchLive, fetchFilteredCalculation, fetchSavedFilter, describeGatewayFailure,
+} from '../services/gatewayService';
 import { licenseStatusOf } from '../services/clientService';
 import { useAuth } from '../contexts/AuthContext';
 import { useClients } from '../contexts/ClientsContext';
 import { formatPlantDateTime, formatPlantTime } from '../utils/formatters';
+import { filterFromSearchParams, filterToSearchParams, requestFromSection2 } from '../utils/filterUrl';
 import type {
-  GatewayFailureReason, GatewayFilterRequest, GatewayLiveResponse, LicenseStatus,
+  GatewayFailureReason, GatewayFilterRequest, GatewayLiveResponse, GatewaySection2, LicenseStatus,
 } from '../types';
 
 const AUTO_REFRESH_MS = 30_000;
+
+// While a reopened result is still being calculated (409 pending/processing), ask again this
+// often, up to this many times (about a minute, the same budget as a fresh calculation).
+const REOPEN_RETRY_MS = 3_000;
+const REOPEN_MAX_TRIES = 20;
 
 type PullState = 'idle' | 'loading' | 'ok' | GatewayFailureReason;
 
@@ -36,6 +44,13 @@ const statusChipSx: Record<LicenseStatus, object> = {
 };
 
 const FILTER_FAILED = 'Calculation failed. Please try again.';
+const LINK_RESULT_GONE = 'The saved result in this link no longer exists. Press Apply Filter to calculate it again.';
+
+/** The applied result, and which parameters it computed (null = all). */
+function appliedFrom(s: GatewaySection2, asked: string[] | undefined): AppliedFilter {
+  // A gateway that does not echo selectedParameters yet: fall back to what was asked for.
+  return { result: s, selected: s.selectedParameters !== undefined ? s.selectedParameters : asked ?? null };
+}
 
 /** Per-client dashboard — mirrors the client's own gateway dashboard, fed by
  *  on-demand pulls of /api/admin/* (nothing cached). */
@@ -53,12 +68,30 @@ export const ClientDashboard: React.FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showRawLive, setShowRawLive] = useState(false);
 
-  // Filtered Parameters: only a filter applied from this page. live.section2
-  // (the gateway's latest calculation, whoever ran it) is never shown, and
-  // nothing is calculated until Apply is pressed. Live refreshes leave it alone.
+  // Filtered Parameters: only a filter applied in THIS browser tab, kept in React state and in
+  // the tab's URL (utils/filterUrl.ts) — never in Firestore or on the gateway, so viewers cannot
+  // change each other's filter. Nothing is calculated until Apply is pressed; a refresh reopens
+  // the saved result by id instead. Live refreshes leave it alone.
+  const [, setSearchParams] = useSearchParams();
   const [applied, setApplied] = useState<AppliedFilter | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
   const [filterError, setFilterError] = useState<string | null>(null);
+  // The filter the filter bar starts from (reopened from the URL), and a key that remounts the
+  // bar so it picks that up.
+  const [filterInitial, setFilterInitial] = useState<GatewayFilterRequest | null>(null);
+  const [filterBarKey, setFilterBarKey] = useState(0);
+
+  const refillFilterBar = useCallback((req: GatewayFilterRequest | null) => {
+    setFilterInitial(req);
+    setFilterBarKey(k => k + 1);
+  }, []);
+
+  // React Router hands out a new setSearchParams whenever the URL changes. Called through an
+  // effect event, the reopen effect below does not depend on it — otherwise every URL write
+  // would run the effect again and reopen the result in a loop.
+  const replaceUrl = useEffectEvent((next: URLSearchParams | ((prev: URLSearchParams) => URLSearchParams)) => {
+    setSearchParams(next, { replace: true });
+  });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -90,6 +123,69 @@ export const ClientDashboard: React.FC = () => {
     return () => clearInterval(timer);
   }, [autoRefresh, load]);
 
+  // On opening the page: a `result` in this tab's URL is reopened by id with GET
+  // /api/admin/filter/{id} — never recomputed. The URL is read once per client, from the address
+  // bar itself, because the page rewrites it on Apply and Reset.
+  useEffect(() => {
+    if (!id) return;
+    const { request, resultId } = filterFromSearchParams(new URLSearchParams(window.location.search));
+    if (!resultId) {
+      if (request) refillFilterBar(request);  // a filter with no result: show it, compute nothing
+      return;
+    }
+
+    const dropResultFromUrl = () =>
+      replaceUrl(prev => { const p = new URLSearchParams(prev); p.delete('result'); return p; });
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+
+    const reopen = async () => {
+      let retrying = false;
+      try {
+        const result = await fetchSavedFilter(id, resultId);
+        if (cancelled) return;
+        if (result.ok) {
+          // The gateway's copy of the request wins over the rest of the URL.
+          const saved = requestFromSection2(result.data);
+          setApplied(appliedFrom(result.data, request?.selectedParameters));
+          refillFilterBar(saved);
+          replaceUrl(filterToSearchParams(saved, result.data.requestId));
+        } else if (result.status === 404) {
+          refillFilterBar(request);
+          setFilterError(LINK_RESULT_GONE);
+          dropResultFromUrl();
+        } else if (result.status === 409 && (result.requestStatus === 'pending' || result.requestStatus === 'processing')
+                   && ++tries < REOPEN_MAX_TRIES) {
+          retrying = true;
+          timer = setTimeout(() => { void reopen(); }, REOPEN_RETRY_MS);
+        } else if (result.status === 409) {
+          refillFilterBar(request);
+          setFilterError(FILTER_FAILED);
+          dropResultFromUrl();
+        } else {
+          // Gateway unreachable, or similar: keep `result` so a later refresh can try again.
+          refillFilterBar(request);
+          setFilterError(`Could not reopen the saved result. ${describeGatewayFailure(result)}`);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        refillFilterBar(request);
+        setFilterError(`Could not reopen the saved result. ${(err as Error).message}`);
+      } finally {
+        if (!cancelled && !retrying) setFilterLoading(false);
+      }
+    };
+
+    setFilterLoading(true);
+    void reopen();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [id, refillFilterBar]);
+
   const applyFilter = async (req: GatewayFilterRequest) => {
     if (!id) return;
     setFilterLoading(true);
@@ -97,17 +193,15 @@ export const ClientDashboard: React.FC = () => {
     try {
       const result = await fetchFilteredCalculation(id, req);
       if (!result.ok) {
-        // The reason is also recorded in Recent Events by the proxy.
         // The proxy also records the reason against the client in Firestore.
         console.warn('Filter calculation failed:', describeGatewayFailure(result));
         setFilterError(FILTER_FAILED);
         return;
       }
-      const s = result.data;
-      setApplied({
-        result: s,
-        selected: s.selectedParameters !== undefined ? s.selectedParameters : req.selectedParameters ?? null,
-      });
+      setApplied(appliedFrom(result.data, req.selectedParameters));
+      // This tab's URL now names the result, so a refresh reopens it instead of recomputing.
+      // Replaced, not pushed: Back should leave the page, not step through filters.
+      setSearchParams(filterToSearchParams(req, result.data.requestId), { replace: true });
     } catch (err) {
       console.warn('Filter calculation failed:', err);
       setFilterError(FILTER_FAILED);
@@ -119,6 +213,7 @@ export const ClientDashboard: React.FC = () => {
   const resetFilter = () => {
     setApplied(null);
     setFilterError(null);
+    setSearchParams(new URLSearchParams(), { replace: true });
   };
 
   if (clientsLoading) {
@@ -274,6 +369,8 @@ export const ClientDashboard: React.FC = () => {
           <Divider sx={{ my: 3 }} />
 
           <FilterBar
+            key={filterBarKey}
+            initial={filterInitial}
             onApply={(req) => void applyFilter(req)}
             onReset={resetFilter}
             loading={filterLoading}

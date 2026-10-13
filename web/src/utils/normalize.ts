@@ -24,7 +24,10 @@ export function normalizeSection2(s: GatewaySection2 | null | undefined): Gatewa
   };
 }
 
-export function normalizeLive(live: GatewayLiveResponse): GatewayLiveResponse {
+export function normalizeLive(raw: GatewayLiveResponse): GatewayLiveResponse {
+  // A gateway older than 2026-10-12 still sends section2: the latest filter applied by anyone.
+  // Dropped here so no part of the page can show another viewer's filter.
+  const { section2: _ignored, ...live } = raw as GatewayLiveResponse & { section2?: unknown };
   return {
     ...live,
     lifetime: list(live.lifetime),
@@ -35,7 +38,6 @@ export function normalizeLive(live: GatewayLiveResponse): GatewayLiveResponse {
     spareAlerts: list(live.spareAlerts),
     // Only trust impellers.selected when it is the documented list of numbers.
     impellers: Array.isArray(live.impellers?.selected) ? live.impellers : null,
-    section2: normalizeSection2(live.section2),
   };
 }
 

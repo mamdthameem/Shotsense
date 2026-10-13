@@ -30,8 +30,12 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   recalculated (see [CONTRACT-admin-api.md](CONTRACT-admin-api.md)). It is only formatted to match
   the gateway's dashboard — units, fixed decimals, thousands separators, seconds as `23h 32m`, and
   times in plant time (IST) as `14/05/2026, 15:29:33`.
-- **Filters run only when an admin presses Apply.** The client page never shows the gateway's own
-  latest filtered calculation (`section2` in `/live`).
+- **Filters run only when an admin presses Apply, and belong to that browser tab.** The applied
+  filter and the gateway's result id live in the page URL (`?filter=time&period=day&…&result=124`,
+  see `web/src/utils/filterUrl.ts`), never in Firestore, so two admins on the same client cannot
+  change each other's view. A refresh reopens the result by id (`GET /api/admin/filter/{id}`)
+  without recomputing. The gateway no longer sends `section2` in `/live` (2026-10-12); the page
+  drops it even from an older gateway.
 - **"Unreachable" means unreachable.** A gateway that answers, even with an error, counts as
   reached; only a network failure, or a tunnel that cannot reach the gateway behind it, marks a
   client unreachable in the client list.

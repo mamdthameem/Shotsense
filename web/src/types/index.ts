@@ -139,14 +139,17 @@ export interface GatewaySection2Amp {
 }
 
 /** The parameter keys POST /api/admin/filter accepts in selectedParameters. */
-export type FilterParameterKey =
-  | 'machine_utility_pct'
-  | 'production_qty_kg'
-  | 'energy_kwh_total'
-  | 'energy_per_casting_kwh_kg'
-  | 'blast_time_sec'
-  | 'cycle_count'
-  | 'impeller_current';
+export const FILTER_PARAMETER_KEYS = [
+  'machine_utility_pct',
+  'production_qty_kg',
+  'energy_kwh_total',
+  'energy_per_casting_kwh_kg',
+  'blast_time_sec',
+  'cycle_count',
+  'impeller_current',
+] as const;
+
+export type FilterParameterKey = typeof FILTER_PARAMETER_KEYS[number];
 
 export interface GatewaySection2 {
   requestId: number;
@@ -202,7 +205,9 @@ export interface GatewayLiveResponse {
   ampsLastCycle: GatewayAmpReading[];
   spareGrid: GatewaySpareRow[];
   spareAlerts: GatewaySpareRow[];
-  section2: GatewaySection2 | null;  // not shown: the page computes its own filters
+  // No section2: the gateway removed it on 2026-10-12. It was the latest filter applied by
+  // anyone, which put one viewer's filter on every screen. A filter result now comes only from
+  // this viewer's own POST /api/admin/filter, or GET /api/admin/filter/{id} to reopen it.
 }
 
 // /api/admin/history has no type here: the client page has no history view.
@@ -263,6 +268,8 @@ export type GatewayFailureReason =
   | 'auth-failed'
   | 'gateway-error';
 
+// requestStatus: the state a 409 from GET /api/admin/filter/{id} reports —
+// "pending" | "processing" while it is still calculating, "error" if it failed.
 export type ProxyResult<T> =
   | { ok: true; data: T; trendBucket?: string }
-  | { ok: false; reason: GatewayFailureReason; status?: number; message?: string };
+  | { ok: false; reason: GatewayFailureReason; status?: number; message?: string; requestStatus?: string };

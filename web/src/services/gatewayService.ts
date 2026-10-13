@@ -27,11 +27,9 @@ export function describeGatewayFailure(result: Extract<ProxyResult<unknown>, { o
   return result.message ? `${head} — ${result.message}` : `${head}.`;
 }
 
-// The proxy also serves 'history'; the client page has no history view, so
-// nothing here calls it.
 interface ProxyRequest {
   clientId: string;
-  view: 'live' | 'trends' | 'filter' | 'amps-by-cycle' | 'filter-amps';
+  view: 'live' | 'trends' | 'filter' | 'filter-result' | 'amps-by-cycle' | 'filter-amps';
   trendsQuery?: GatewayTrendsQuery;
   filterBody?: GatewayFilterRequest;
   impeller?: number;
@@ -102,7 +100,22 @@ export async function fetchFilteredCalculation(
 ): Promise<ProxyResult<GatewaySection2>> {
   const result = (await filterProxy({ clientId, view: 'filter', filterBody })).data as ProxyResult<GatewaySection2 | null>;
   if (!result.ok) return result;
-  const section2 = normalizeSection2(result.data);
+  return section2Result(result.data);
+}
+
+/**
+ * Reopens one saved filter result by its id (the `result` in the page URL) — nothing is
+ * recomputed. A 404 means the id does not exist; a 409 carries `requestStatus` ("pending" or
+ * "processing" while it is still calculating, "error" if it failed).
+ */
+export async function fetchSavedFilter(clientId: string, requestId: number): Promise<ProxyResult<GatewaySection2>> {
+  const result = (await proxy({ clientId, view: 'filter-result', requestId })).data as ProxyResult<GatewaySection2 | null>;
+  if (!result.ok) return result;
+  return section2Result(result.data);
+}
+
+function section2Result(data: GatewaySection2 | null): ProxyResult<GatewaySection2> {
+  const section2 = normalizeSection2(data);
   return section2
     ? { ok: true, data: section2 }
     : { ok: false, reason: 'gateway-error', message: 'Gateway returned an empty filter result.' };

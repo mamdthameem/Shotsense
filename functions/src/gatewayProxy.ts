@@ -22,8 +22,10 @@ interface FilterBody {
   selectedParameters?: string[];
 }
 
-type View = "live" | "trends" | "filter" | "amps-by-cycle" | "filter-amps";
-const VIEWS: ReadonlySet<string> = new Set<View>(["live", "trends", "filter", "amps-by-cycle", "filter-amps"]);
+// "filter-result" reopens one saved calculation by id (GET /api/admin/filter/{id}), so a page
+// refresh shows the same result without computing it again.
+type View = "live" | "trends" | "filter" | "filter-result" | "amps-by-cycle" | "filter-amps";
+const VIEWS: ReadonlySet<string> = new Set<View>(["live", "trends", "filter", "filter-result", "amps-by-cycle", "filter-amps"]);
 const TREND_BUCKETS: ReadonlySet<string> = new Set(["auto", "hour", "day", "month"]);
 
 interface ProxyRequest {
@@ -32,7 +34,7 @@ interface ProxyRequest {
   trendsQuery?: TrendsQuery;
   filterBody?: FilterBody;
   impeller?: number;   // amps-by-cycle
-  requestId?: number;  // filter-amps
+  requestId?: number;  // filter-result, filter-amps
 }
 
 // Network-level failures are split out beyond the historic "unreachable" so the
@@ -49,10 +51,11 @@ type FailureReason =
   | "gateway-error";
 
 // trendBucket carries the gateway's X-Trend-Bucket response header (the bucket
-// it picked for bucket=auto) when it sends one.
+// it picked for bucket=auto) when it sends one. requestStatus carries the
+// "status" of a 409 from filter-result: "pending" | "processing" | "error".
 type ProxyResult =
   | { ok: true; data: unknown; trendBucket?: string }
-  | { ok: false; reason: FailureReason; status?: number; message?: string };
+  | { ok: false; reason: FailureReason; status?: number; message?: string; requestStatus?: string };
 
 // "filter" gets a much longer budget than the others — a synchronous filtered
 // calculation can be slow, and CONTRACT-admin-api.md suggests 30–60s until it
@@ -65,6 +68,7 @@ const FETCH_TIMEOUT_MS: Record<View, number> = {
   live: 8000,
   trends: 15000,
   filter: 60000,
+  "filter-result": 15000,
   "amps-by-cycle": 15000,
   "filter-amps": 15000,
 };
@@ -80,8 +84,8 @@ const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 52
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
  * stored): looks up the client's address + API key in the registry, calls
- * /api/admin/{live|trends|filter|amps/by-cycle|filter/{id}/amps} over
- * HTTPS, and returns the JSON as-is. Reachability problems come back as
+ * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps}
+ * over HTTPS, and returns the JSON as-is. Reachability problems come back as
  * { ok: false } rather than errors so the dashboard can render a clear
  * "client unreachable" state.
  */
@@ -176,11 +180,11 @@ function buildRequest(
       throw new HttpsError("invalid-argument", "amps-by-cycle requires impeller 1–10.");
     }
     path = "amps/by-cycle";
-  } else if (view === "filter-amps") {
+  } else if (view === "filter-amps" || view === "filter-result") {
     if (!Number.isSafeInteger(requestId) || requestId! < 1) {
-      throw new HttpsError("invalid-argument", "filter-amps requires a positive integer requestId.");
+      throw new HttpsError("invalid-argument", `${view} requires a positive integer requestId.`);
     }
-    path = `filter/${requestId}/amps`;
+    path = view === "filter-amps" ? `filter/${requestId}/amps` : `filter/${requestId}`;
   }
 
   const scheme = client.useTls ? "https" : "http";
@@ -267,7 +271,7 @@ async function fetchGateway(
       };
     }
     if (!response.ok) {
-      const upstreamMessage = await readErrorMessage(response);
+      const { message: upstreamMessage, requestStatus } = await readErrorBody(response);
       if (response.status === 401 || response.status === 403) {
         return {
           ok: false, reason: "auth-failed", status: response.status,
@@ -283,6 +287,7 @@ async function fetchGateway(
       return {
         ok: false, reason: "gateway-error", status: response.status,
         message: upstreamMessage ?? `Gateway returned HTTP ${response.status}.`,
+        ...(requestStatus ? { requestStatus } : {}),
       };
     }
     const result = await readJsonBody(response);
@@ -328,13 +333,19 @@ function tooLarge(status: number): ProxyResult {
   };
 }
 
-/** Best-effort read of the gateway's documented `{"error": "..."}` failure body (CONTRACT-admin-api.md). */
-async function readErrorMessage(response: Response): Promise<string | null> {
+/**
+ * Best-effort read of the gateway's documented `{"error": "..."}` failure body (CONTRACT-admin-api.md),
+ * plus the `status` a 409 from GET filter/{id} carries (still calculating, or failed).
+ */
+async function readErrorBody(response: Response): Promise<{ message: string | null; requestStatus: string | null }> {
   try {
-    const body = (await response.clone().json()) as { error?: unknown };
-    return typeof body.error === "string" && body.error.trim() ? body.error : null;
+    const body = (await response.clone().json()) as { error?: unknown; status?: unknown };
+    return {
+      message: typeof body.error === "string" && body.error.trim() ? body.error : null,
+      requestStatus: typeof body.status === "string" ? body.status : null,
+    };
   } catch {
-    return null;
+    return { message: null, requestStatus: null };
   }
 }
 

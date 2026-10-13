@@ -89,18 +89,44 @@ interface Props {
   loading: boolean;
   appliedName: string | null;   // chip text once a filter is applied
   error: string | null;
+  /**
+   * The filter to start from: the one reopened from this tab's URL. Read once, when the bar
+   * mounts (the page remounts it with a new key to load another). Absent = the defaults
+   * everyone gets: Time Range → Yesterday, every parameter ticked.
+   */
+  initial?: GatewayFilterRequest | null;
+}
+
+/** The preset a reopened time filter used; a custom range (or an unknown label) opens as Custom. */
+function initialPreset(req: GatewayFilterRequest | null | undefined): TimePreset {
+  if (req?.filterBy !== 'time') return 'day';
+  const known = PRESETS.find(p => p.key !== 'custom' && p.key === req.periodLabel);
+  return known ? known.key : 'custom';
+}
+
+function initialTicked(req: GatewayFilterRequest | null | undefined): Record<FilterParameterKey, boolean> {
+  const selected = req?.selectedParameters ?? [];
+  if (selected.length === 0) return ALL_TICKED;  // none listed = all were computed
+  return Object.fromEntries(PARAMETERS.map(p => [p.key, selected.includes(p.key)])) as Record<FilterParameterKey, boolean>;
+}
+
+/** A custom-range picker value from a reopened time filter, or the default (yesterday's window). */
+function initialCustom(req: GatewayFilterRequest | null | undefined, edge: 0 | 1): string {
+  const iso = req?.filterBy === 'time' ? (edge === 0 ? req.filterStart : req.filterEnd) : undefined;
+  const d = iso ? new Date(iso) : null;
+  return toPlantInput(d && !isNaN(d.getTime()) ? d : presetWindow('day', new Date())[edge]);
 }
 
 /** Time / Cycle / Item filter and the parameters to compute — mirrors the gateway dashboard's Filters. */
-export default function FilterBar({ onApply, onReset, loading, appliedName, error }: Props) {
-  const [tab, setTab] = useState<FilterTab>('time');
-  const [preset, setPreset] = useState<TimePreset>('day');
-  const [customStart, setCustomStart] = useState(() => toPlantInput(presetWindow('day', new Date())[0]));
-  const [customEnd, setCustomEnd] = useState(() => toPlantInput(presetWindow('day', new Date())[1]));
-  const [cycleFrom, setCycleFrom] = useState('');
-  const [cycleTo, setCycleTo] = useState('');
-  const [itemName, setItemName] = useState('');
-  const [ticked, setTicked] = useState(ALL_TICKED);
+export default function FilterBar({ onApply, onReset, loading, appliedName, error, initial }: Props) {
+  const [tab, setTab] = useState<FilterTab>(initial?.filterBy ?? 'time');
+  const [preset, setPreset] = useState<TimePreset>(() => initialPreset(initial));
+  const [customStart, setCustomStart] = useState(() => initialCustom(initial, 0));
+  const [customEnd, setCustomEnd] = useState(() => initialCustom(initial, 1));
+  const [cycleFrom, setCycleFrom] = useState(initial?.filterBy === 'cycle' ? String(initial.filterCycleFrom ?? '') : '');
+  const [cycleTo, setCycleTo] = useState(initial?.filterBy === 'cycle' ? String(initial.filterCycleTo ?? '') : '');
+  const [itemName, setItemName] = useState(initial?.filterBy === 'metal' ? initial.filterMetalName ?? '' : '');
+  const [ticked, setTicked] = useState(() => initialTicked(initial));
   const [message, setMessage] = useState<string | null>(null);
 
   // Machine on-time cannot be attributed to one casting item, so the Item tab never computes it.
