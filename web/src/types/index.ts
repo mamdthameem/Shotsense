@@ -193,6 +193,47 @@ export interface GatewayFilterAmps {
 // Optional: a gateway older than this change does not send it.
 export interface GatewayImpellers {
   selected: number[];     // impeller numbers, e.g. [1, 2, 3, 5]
+  // The impellers the site's tag file has tags for: the only ones that can be
+  // selected. Absent from a gateway older than 2026-10-26 (offer 1–10 then).
+  available?: number[];
+}
+
+// GET /api/admin/tags — the Tag check page (office only). Every tag in the
+// site's tag file, in the file's order, with its latest reading. value null =
+// the gateway has never stored a reading for that address.
+export interface GatewayTagReading {
+  name: string;
+  address: string;
+  dataType: string;
+  mode: string;
+  value: string | null;
+  lastUpdated: string | null;
+  isStale: boolean;
+}
+
+export interface GatewayPlcEndpoint {
+  ipAddress: string;
+  rack: number;
+  slot: number;
+}
+
+export interface GatewayTagCheck {
+  generatedAtUtc: string;
+  plcConnected: boolean;
+  lastScanAt: string | null;
+  plc: GatewayPlcEndpoint;
+  tagFileVersion: string | null;
+  tags: GatewayTagReading[];
+}
+
+// GET/PUT /api/admin/settings/plc. source "installer" = the address typed at
+// installation; "cloud" = set from this website, which wins from then on.
+export interface GatewayPlcSettings {
+  plc: GatewayPlcEndpoint;
+  source: 'installer' | 'cloud';
+  connected: boolean;
+  lastScanAt?: string | null;
+  applied?: boolean;
 }
 
 export interface GatewayLiveResponse {

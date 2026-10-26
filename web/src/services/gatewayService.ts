@@ -5,8 +5,8 @@ import {
 } from '../utils/normalize';
 import type {
   GatewayCycleAmpPoint, GatewayFailureReason, GatewayFilterAmps, GatewayFilterRequest,
-  GatewayLiveResponse, GatewaySection2, GatewayTrendPoint, GatewayTrendsQuery,
-  ProxyResult, TrendBucket, TrendSeries,
+  GatewayLiveResponse, GatewayPlcEndpoint, GatewayPlcSettings, GatewaySection2, GatewayTagCheck,
+  GatewayTrendPoint, GatewayTrendsQuery, ProxyResult, TrendBucket, TrendSeries,
 } from '../types';
 
 const FAILURE_LABELS: Record<GatewayFailureReason, string> = {
@@ -29,12 +29,15 @@ export function describeGatewayFailure(result: Extract<ProxyResult<unknown>, { o
 
 interface ProxyRequest {
   clientId: string;
-  view: 'live' | 'trends' | 'filter' | 'filter-result' | 'amps-by-cycle' | 'filter-amps' | 'set-impellers';
+  view:
+    | 'live' | 'trends' | 'filter' | 'filter-result' | 'amps-by-cycle' | 'filter-amps' | 'set-impellers'
+    | 'tags' | 'plc-settings' | 'set-plc';
   trendsQuery?: GatewayTrendsQuery;
   filterBody?: GatewayFilterRequest;
   impeller?: number;
   requestId?: number;
   selected?: number[];
+  plc?: GatewayPlcEndpoint;
 }
 
 const proxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy');
@@ -133,6 +136,24 @@ export async function saveImpellerSelection(
 ): Promise<ProxyResult<{ selected: number[]; maxImpellers: number }>> {
   return (await filterProxy({ clientId, view: 'set-impellers', selected })).data as
     ProxyResult<{ selected: number[]; maxImpellers: number }>;
+}
+
+/** Every tag in the client's tag file with its latest reading (Tag check, office only). */
+export async function fetchTagCheck(clientId: string): Promise<ProxyResult<GatewayTagCheck>> {
+  return (await proxy({ clientId, view: 'tags' })).data as ProxyResult<GatewayTagCheck>;
+}
+
+/** Where the client's gateway reads the PLC, and whether the PLC answers there. */
+export async function fetchPlcSettings(clientId: string): Promise<ProxyResult<GatewayPlcSettings>> {
+  return (await proxy({ clientId, view: 'plc-settings' })).data as ProxyResult<GatewayPlcSettings>;
+}
+
+/**
+ * Sets the PLC's address on the client's gateway. It switches at once and waits up to ~10 s to say
+ * whether the PLC answered there (`connected`).
+ */
+export async function savePlcSettings(clientId: string, plc: GatewayPlcEndpoint): Promise<ProxyResult<GatewayPlcSettings>> {
+  return (await proxy({ clientId, view: 'set-plc', plc })).data as ProxyResult<GatewayPlcSettings>;
 }
 
 /** One impeller's average current for every completed cycle (live impeller tile chart). */

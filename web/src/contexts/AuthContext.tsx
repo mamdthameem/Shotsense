@@ -6,7 +6,8 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../firebase';
 import type { AdminUser } from '../types';
 
 interface AuthContextType {
@@ -40,6 +41,22 @@ const isListedAdmin = async (fbUser: FirebaseUser): Promise<boolean> => {
   }
 };
 
+/** Office staff sign in to every client's gateway dashboard with this same account; the gateway
+ *  recognises them by a `cloudAdmin` claim on their token, which the cloud keeps in step with the
+ *  admins collection. An admin made before that existed has no claim yet: ask the cloud to set it
+ *  (for every admin at once), then refresh this token. Best effort — the cloud site itself does not
+ *  depend on the claim. */
+const ensureCloudAdminClaim = async (fbUser: FirebaseUser): Promise<void> => {
+  try {
+    const { claims } = await fbUser.getIdTokenResult();
+    if (claims.cloudAdmin === true) return;
+    await httpsCallable(functions, 'syncAdminClaims')();
+    await fbUser.getIdToken(true);
+  } catch {
+    // Not fatal: it is retried at the next sign-in.
+  }
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,6 +70,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       try {
         if (await isListedAdmin(fbUser)) {
+          void ensureCloudAdminClaim(fbUser);
           setUser({
             uid: fbUser.uid,
             email: fbUser.email ?? '',

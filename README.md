@@ -39,7 +39,16 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 - **Impeller selection is decided here, and only here.** The buttons in a client's Impeller Current
   header (any admin) save through `gatewayProxy` view `set-impellers` →
   `PUT /api/admin/settings/impellers`; the gateway recalculates all recorded energy before it
-  answers. The gateway's own dashboard has no buttons for it (since 2026-10-13).
+  answers. The gateway's own dashboard has no buttons for it (since 2026-10-13). Only the impellers the
+  site's tag file has are offered (`/live` `impellers.available`), and no buttons at all for a machine
+  with one impeller (2026-10-26).
+- **The PLC's address is set here too** (client page → **PLC**, view `set-plc` →
+  `PUT /api/admin/settings/plc`). The installer's IP is only the starting value; the gateway switches
+  within seconds and says whether the PLC answers. Plant-network addresses only. Works while the PLC is
+  down, because the cloud reaches the gateway through the tunnel.
+- **Tag check** (client page → **Tag check**, view `tags` → `GET /api/admin/tags`): every tag in the
+  client's tag file with the gateway's latest reading, refreshed every 5 s — to compare against TIA
+  Portal when a tile reads 0. Office only, like the tag file itself.
 - **One installation code per client** (Edit → **Copy installation code**, `web/src/utils/installCode.ts`):
   keys, licence and tag-file addresses and the Cloudflare tunnel token, pasted once into the gateway
   installer. Offered only while the dialog shows exactly what is saved. The tunnel token is stored on
@@ -61,7 +70,7 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
 | Path | What it is |
 |---|---|
 | `web/` | Admin website (Vite + React + TypeScript + MUI) |
-| `functions/` | Cloud Functions `licenseCheck` and `siteProfile` (HTTP, called by gateways with their licence key), `gatewayProxy`, `uploadSiteProfile` and the client-user callables, region `asia-south1` |
+| `functions/` | Cloud Functions `licenseCheck` and `siteProfile` (HTTP, called by gateways with their licence key), `gatewayProxy`, `uploadSiteProfile`, the client-user callables, and `syncCloudAdminClaim` / `syncAdminClaims` (office staff sign-in on gateways), region `asia-south1` |
 | `firestore.rules` | Only admins can use `clients/`; `admins/` and `clientUsers/` can only be changed from the console or a function; `siteProfiles/` is closed to every browser |
 
 ## Firestore data
@@ -74,7 +83,10 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   by `uploadSiteProfile`, read by `siteProfile` for that client's gateway. No browser rule allows it.
 - `admins/{uid}` — if this document exists, that login is a cloud admin. **Created by hand in the
   Firebase console. There is no sign-up.** Every cloud admin has the same access: clients, keys,
-  impeller selection and client logins. There is no higher level.
+  impeller selection, PLC addresses and client logins. There is no higher level. Creating or deleting
+  the document sets or removes the account's `cloudAdmin` claim (`syncCloudAdminClaim`), which lets
+  that person sign in to **every** client's gateway dashboard as admin with the same email. Removal
+  also revokes their sessions.
 - `clientUsers/{uid}` — the readable copy of a client company's logins: name, email, clientId,
   role, disabled. Written only by the Cloud Functions below; readable by any cloud admin.
   **Access itself never comes from here** — it comes from the custom claims on the account.
@@ -90,6 +102,12 @@ travel inside the signed ID token so the gateway can trust them without a databa
 |---|---|---|
 | `clientId` | a client's id | the company whose gateway this person may use; any other gateway refuses them |
 | `role` | `admin` or `viewer` | shown on the gateway; kept for gateway settings that only an admin may change |
+
+**Office staff** need no client account: a cloud admin's own email works on every gateway (claim
+`cloudAdmin: true`, see `admins/{uid}`). Admins made before 2026-10-26 get the claim the next time they
+open this website (`syncAdminClaims`). Firebase allows one account per email, so an office email can
+never be added as a client user — and does not need to be. "Forgot password?" on a gateway works for
+any account in the project, so a reset email arriving does not mean that email belongs to the site.
 
 **No password is ever visible to anyone here.** An account is created without one, and the person
 sets their own from a link Firebase emails them. Nobody — including a cloud admin — can read or
@@ -142,6 +160,9 @@ Renewing = an admin moves the expiry date in the dashboard.
 | trends | 15 s | always `bucket=auto`, one call per chart opened (as on the gateway's own dashboard) |
 | amps/by-cycle, filter/{id}/amps | 15 s | when an impeller chart is opened |
 | filter | **60 s** | function limit 75 s, browser limit 80 s, Cloudflare's own limit 100 s |
+| set-impellers | 60 s | the gateway recalculates all recorded energy first |
+| tags | 15 s | Tag check, every 5 s while open |
+| plc-settings / set-plc | 8 s / 25 s | the gateway waits up to ~10 s for the PLC to answer at a new address |
 
 Replies larger than 10 MB are refused (use a shorter filter window).
 

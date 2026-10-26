@@ -5,6 +5,7 @@ initializeApp();
 export { licenseCheck } from "./licenseCheck";
 export { gatewayProxy } from "./gatewayProxy";
 export { siteProfile, uploadSiteProfile } from "./siteProfile";
+export { syncCloudAdminClaim, syncAdminClaims } from "./adminClaims";
 export {
   createClientUser,
   listClientUsers,

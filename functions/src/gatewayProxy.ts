@@ -23,12 +23,17 @@ interface FilterBody {
 }
 
 // "filter-result" reopens one saved calculation by id (GET /api/admin/filter/{id}), so a page
-// refresh shows the same result without computing it again. "set-impellers" is the only write:
-// PUT /api/admin/settings/impellers — which impellers the site includes is chosen here, in the
-// cloud, never on the gateway dashboard (decided 2026-10-13).
-type View = "live" | "trends" | "filter" | "filter-result" | "amps-by-cycle" | "filter-amps" | "set-impellers";
+// refresh shows the same result without computing it again. Two writes, both chosen here in the
+// cloud and never on the gateway dashboard: "set-impellers" (PUT /api/admin/settings/impellers,
+// decided 2026-10-13) and "set-plc" (PUT /api/admin/settings/plc, the PLC's address, 2026-10-26).
+// "tags" is the Tag check page (GET /api/admin/tags): every tag in the site's tag file with its
+// latest reading, for office staff only; "plc-settings" reads the PLC address back.
+type View =
+  | "live" | "trends" | "filter" | "filter-result" | "amps-by-cycle" | "filter-amps" | "set-impellers"
+  | "tags" | "plc-settings" | "set-plc";
 const VIEWS: ReadonlySet<string> = new Set<View>([
   "live", "trends", "filter", "filter-result", "amps-by-cycle", "filter-amps", "set-impellers",
+  "tags", "plc-settings", "set-plc",
 ]);
 const MAX_IMPELLERS = 10;
 const TREND_BUCKETS: ReadonlySet<string> = new Set(["auto", "hour", "day", "month"]);
@@ -41,6 +46,7 @@ interface ProxyRequest {
   impeller?: number;   // amps-by-cycle
   requestId?: number;  // filter-result, filter-amps
   selected?: number[]; // set-impellers
+  plc?: { ipAddress?: unknown; rack?: unknown; slot?: unknown }; // set-plc
 }
 
 // Network-level failures are split out beyond the historic "unreachable" so the
@@ -79,6 +85,10 @@ const FETCH_TIMEOUT_MS: Record<View, number> = {
   "filter-amps": 15000,
   // Saving recalculates the energy of every recorded cycle before the gateway answers.
   "set-impellers": 60000,
+  tags: 15000,
+  "plc-settings": 8000,
+  // The gateway waits up to ~10 s to say whether the PLC answered at the new address.
+  "set-plc": 25000,
 };
 // A reply bigger than this is refused rather than relayed (a callable response
 // has to fit in the function's memory and Firebase's response size limit).
@@ -92,7 +102,7 @@ const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 52
 /**
  * On-demand pass-through to one client's gateway API (never cached, never
  * stored): looks up the client's address + API key in the registry, calls
- * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps|settings/impellers}
+ * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps|settings/impellers|tags|settings/plc}
  * over HTTPS, and returns the JSON as-is. Any cloud admin may call it — every
  * admin has the same access, including the one write (set-impellers). Reachability problems come back as
  * { ok: false } rather than errors so the dashboard can render a clear
@@ -181,11 +191,13 @@ function eventType(result: ProxyResult): ClientEvent["type"] {
 function buildRequest(
   client: ClientDoc,
   view: View,
-  { trendsQuery, filterBody, impeller, requestId, selected }: ProxyRequest
+  { trendsQuery, filterBody, impeller, requestId, selected, plc }: ProxyRequest
 ): { url: string; method: "GET" | "POST" | "PUT"; body?: string } {
   let path: string = view;
   if (view === "set-impellers") {
     path = "settings/impellers";
+  } else if (view === "plc-settings" || view === "set-plc") {
+    path = "settings/plc";
   } else if (view === "amps-by-cycle") {
     if (!Number.isInteger(impeller) || impeller! < 1 || impeller! > 10) {
       throw new HttpsError("invalid-argument", "amps-by-cycle requires impeller 1–10.");
@@ -220,6 +232,18 @@ function buildRequest(
       throw new HttpsError("invalid-argument", `set-impellers requires a list of distinct impeller numbers 1–${MAX_IMPELLERS}.`);
     }
     return { url: url.toString(), method: "PUT", body: JSON.stringify({ selected: [...list].sort((a, b) => a - b) }) };
+  }
+
+  if (view === "set-plc") {
+    // Checked again on the gateway, which has the final say; this keeps rubbish off the wire.
+    const ipAddress = typeof plc?.ipAddress === "string" ? plc.ipAddress.trim() : "";
+    const rack = Number(plc?.rack);
+    const slot = Number(plc?.slot);
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ipAddress) || !Number.isInteger(rack) || rack < 0 || rack > 7 ||
+        !Number.isInteger(slot) || slot < 0 || slot > 31) {
+      throw new HttpsError("invalid-argument", "set-plc requires an IPv4 address, rack 0–7 and slot 0–31.");
+    }
+    return { url: url.toString(), method: "PUT", body: JSON.stringify({ ipAddress, rack, slot }) };
   }
 
   if (view === "amps-by-cycle") {

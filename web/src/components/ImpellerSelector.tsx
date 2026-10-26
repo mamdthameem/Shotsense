@@ -19,13 +19,19 @@ const ALL = Array.from({ length: MAX_IMPELLERS }, (_, i) => i + 1);
  * figures, so it asks first. Nothing is deleted — selecting an impeller again brings its figures
  * straight back.
  */
-export default function ImpellerSelector({ clientId, selected, onSaved }: {
+export default function ImpellerSelector({ clientId, selected, available, onSaved }: {
   clientId: string;
   /** What the gateway reports now (live.impellers.selected). */
   selected: number[];
+  /**
+   * The impellers the site's tag file has tags for (live.impellers.available) — the only ones
+   * offered, so a one-impeller machine shows one button. An older gateway does not send it: 1–10.
+   */
+  available?: number[];
   /** Called after a save, so the page can pull the recalculated figures. */
   onSaved: () => void;
 }) {
+  const choices = available && available.length > 0 ? [...available].sort((a, b) => a - b) : ALL;
   const savedKey = [...selected].sort((a, b) => a - b).join(',');
   const [draft, setDraft] = useState<number[]>(selected);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -70,13 +76,13 @@ export default function ImpellerSelector({ clientId, selected, onSaved }: {
         disabled={saving}
         aria-label="Impellers included"
       >
-        {ALL.map(n => (
+        {choices.map(n => (
           <ToggleButton key={n} value={n} sx={{ minWidth: 34, px: 1, py: 0.25, fontWeight: 700 }}>
             {n}
           </ToggleButton>
         ))}
       </ToggleButtonGroup>
-      <Button size="small" onClick={() => setDraft(ALL)} disabled={saving}>All</Button>
+      <Button size="small" onClick={() => setDraft(choices)} disabled={saving}>All</Button>
       <Button size="small" onClick={() => setDraft([])} disabled={saving}>None</Button>
       <Button
         size="small"

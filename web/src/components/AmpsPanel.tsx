@@ -118,6 +118,8 @@ interface LiveProps {
   amps: GatewayAmpReading[];
   ampsLastCycle: GatewayAmpReading[];
   selected?: number[];
+  /** The impellers the site's tag file has; the selector offers only these. */
+  available?: number[];
   plcConnected: boolean;
   lastScanAt: string | null;
   /** After the impeller selection is saved: pull /live again for the recalculated figures. */
@@ -131,7 +133,7 @@ interface LiveProps {
  * The header carries the impeller selection buttons — set only from here.
  */
 export default function AmpsPanel({
-  clientId, amps, ampsLastCycle, selected, plcConnected, lastScanAt, onImpellersSaved,
+  clientId, amps, ampsLastCycle, selected, available, plcConnected, lastScanAt, onImpellersSaved,
 }: LiveProps) {
   const [open, setOpen] = useState(false);
   const [impeller, setImpeller] = useState<number | null>(null);
@@ -144,7 +146,10 @@ export default function AmpsPanel({
       <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1.5}>
         <Typography variant="h6" fontWeight={700}>Impeller Current</Typography>
         {/* Absent from a gateway too old to report its selection; it cannot take a save either. */}
-        {selected && <ImpellerSelector clientId={clientId} selected={selected} onSaved={onImpellersSaved} />}
+        {/* Nothing to choose on a machine whose tag file has one impeller. */}
+        {selected && (available?.length ?? 10) > 1 && (
+          <ImpellerSelector clientId={clientId} selected={selected} available={available} onSaved={onImpellersSaved} />
+        )}
       </Box>
       {!plcConnected && (
         <PlcWarning>
@@ -153,7 +158,9 @@ export default function AmpsPanel({
       )}
 
       {sorted.length === 0 ? (
-        <Typography color="text.secondary" variant="body2">No amp readings reported.</Typography>
+        <Typography color="text.secondary" variant="body2">
+          No impeller current readings. The site's tag file has no current tag for these impellers, so energy cannot be calculated yet.
+        </Typography>
       ) : (
         <ImpellerGrid>
           {sorted.map(r => {

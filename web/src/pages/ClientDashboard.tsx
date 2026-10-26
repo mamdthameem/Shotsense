@@ -7,6 +7,10 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CodeIcon from '@mui/icons-material/Code';
 import PeopleOutlineIcon from '@mui/icons-material/PeopleOutline';
+import ListAltIcon from '@mui/icons-material/ListAlt';
+import SettingsEthernetIcon from '@mui/icons-material/SettingsEthernet';
+import TagCheckDialog from '../components/TagCheckDialog';
+import PlcSettingsDialog from '../components/PlcSettingsDialog';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MachineStatusTile from '../components/MachineStatusTile';
 import { LifetimeSection, TileGrid } from '../components/LifetimeSection';
@@ -65,6 +69,8 @@ export const ClientDashboard: React.FC = () => {
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showRawLive, setShowRawLive] = useState(false);
+  const [tagCheckOpen, setTagCheckOpen] = useState(false);
+  const [plcOpen, setPlcOpen] = useState(false);
 
   // Filtered Parameters: only a filter applied in THIS browser tab, kept in React state and in
   // the tab's URL (utils/filterUrl.ts) — never in Firestore or on the gateway, so viewers cannot
@@ -267,6 +273,24 @@ export const ClientDashboard: React.FC = () => {
           >
             Users
           </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<SettingsEthernetIcon />}
+            onClick={() => setPlcOpen(true)}
+            sx={{ borderRadius: 2, fontWeight: 700 }}
+          >
+            PLC
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<ListAltIcon />}
+            onClick={() => setTagCheckOpen(true)}
+            sx={{ borderRadius: 2, fontWeight: 700 }}
+          >
+            Tag check
+          </Button>
           <FormControlLabel
             control={<Switch size="small" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />}
             label="Auto 30s"
@@ -351,6 +375,7 @@ export const ClientDashboard: React.FC = () => {
               amps={live.amps}
               ampsLastCycle={live.ampsLastCycle}
               selected={live.impellers?.selected}
+              available={live.impellers?.available}
               plcConnected={live.plcConnected}
               lastScanAt={live.lastScanAt}
               onImpellersSaved={() => void load()}
@@ -385,6 +410,16 @@ export const ClientDashboard: React.FC = () => {
           </SectionErrorBoundary>
         </>
       )}
+
+      {/* Office-only tools. Both reach the gateway through the tunnel, so they work even while the
+          PLC itself is unreachable. */}
+      <TagCheckDialog clientId={client.id} open={tagCheckOpen} onClose={() => setTagCheckOpen(false)} />
+      <PlcSettingsDialog
+        clientId={client.id}
+        open={plcOpen}
+        onClose={() => setPlcOpen(false)}
+        onSaved={() => void load()}
+      />
     </Container>
   );
 };
