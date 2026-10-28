@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useEffectEvent, useState } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import {
   Container, Divider, Box, Typography, IconButton, Tooltip, Button, Chip,
   Alert, CircularProgress, Switch, FormControlLabel, Paper,
@@ -56,7 +56,7 @@ function appliedFrom(s: GatewaySection2, asked: string[] | undefined): AppliedFi
 }
 
 /** Per-client dashboard — mirrors the client's own gateway dashboard, fed by
- *  on-demand pulls of /api/admin/* (nothing cached). */
+ *  on-demand pulls of /api/admin/*. When the site cannot be reached it shows the last live values the cloud saw. */
 export const ClientDashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -67,6 +67,11 @@ export const ClientDashboard: React.FC = () => {
   const [pullState, setPullState] = useState<PullState>('idle');
   const [pullDetail, setPullDetail] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
+  // Set while the page shows the cloud's remembered values because the site cannot be reached:
+  // when the cloud last saw them.
+  const [lastKnownAt, setLastKnownAt] = useState<Date | null>(null);
+  // Whether this visit has pulled live values at all (read inside load, which must not depend on `live`).
+  const pulledLive = useRef(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showRawLive, setShowRawLive] = useState(false);
   const [tagCheckOpen, setTagCheckOpen] = useState(false);
@@ -104,17 +109,31 @@ export const ClientDashboard: React.FC = () => {
       const result = await fetchLive(id);
       if (result.ok) {
         setLive(result.data);
+        pulledLive.current = true;
         setPullState('ok');
         setPullDetail(null);
         setLastFetched(new Date());
+        setLastKnownAt(null);
       } else {
         setPullState(result.reason);
         setPullDetail(describeGatewayFailure(result));
+        // Nothing pulled in this visit yet: show the last values the cloud saw instead of nothing.
+        // Values already on screen from this visit are at least as recent, so they stay.
+        if (result.lastKnown && !pulledLive.current) {
+          setLive(result.lastKnown.data as GatewayLiveResponse);   // normalised by fetchLive
+          setLastKnownAt(new Date(result.lastKnown.savedAt));
+        }
       }
     } catch (err) {
       setPullState('gateway-error');
       setPullDetail((err as Error).message);
     }
+  }, [id]);
+
+  // Another client: nothing of this one's has been pulled yet.
+  useEffect(() => {
+    pulledLive.current = false;
+    setLastKnownAt(null);
   }, [id]);
 
   useEffect(() => {
@@ -320,7 +339,9 @@ export const ClientDashboard: React.FC = () => {
           <strong>{pullDetail ?? 'Gateway request failed.'}</strong>
           {pullState === 'auth-failed'
             ? ' Check that the client installation and the registry hold the same Admin API key.'
-            : ` Data shown below (if any) is from the last successful pull${lastFetched ? ` at ${formatPlantDateTime(lastFetched)}` : ''}.`}
+            : lastKnownAt
+              ? ` The site cannot be reached (its PC may be off, or its tunnel down). Showing the last values the cloud saw, at ${formatPlantDateTime(lastKnownAt)}. They are not live.`
+              : ` Data shown below (if any) is from the last successful pull${lastFetched ? ` at ${formatPlantDateTime(lastFetched)}` : ''}.`}
         </Alert>
       )}
 
@@ -361,7 +382,7 @@ export const ClientDashboard: React.FC = () => {
               clientId={client.id}
               lifetime={live.lifetime}
               shotsBreakdown={live.shotsBreakdown}
-              lastUpdated={lastFetched}
+              lastUpdated={lastKnownAt ?? lastFetched}
               loading={pullState === 'loading'}
               onRefresh={() => void load()}
             />

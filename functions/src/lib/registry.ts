@@ -42,6 +42,8 @@ export interface ClientDoc {
   siteProfileTagCount?: number | null;
   siteProfileFileName?: string | null;
   siteProfileUploadedAt?: Timestamp | null;
+  // When gatewayProxy last saved this client's /live answer in liveSnapshots/{clientId}.
+  liveSnapshotAt?: Timestamp | null;
 }
 
 export type LicenseStatus = "active" | "grace" | "expired" | "suspended";

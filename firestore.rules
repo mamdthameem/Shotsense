@@ -36,6 +36,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // The last /live answer the cloud saw for each client, kept for when the site cannot be reached.
+    // Read and written only by the gatewayProxy function; a browser gets it through that function.
+    match /liveSnapshots/{clientId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

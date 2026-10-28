@@ -59,6 +59,12 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   and date. The gateway fetches it with its licence key from `siteProfile` at every start (it keeps an
   encrypted copy for starts without internet), and `licenseCheck` returns `siteProfileVersion`, so a new
   upload reaches a running gateway within the hour. Nothing per request, nothing per user.
+- **Last known values when a site is down** (2026-10-28). When an admin's page pulls `/live` successfully,
+  `gatewayProxy` keeps a copy in `liveSnapshots/{clientId}` — at most once a minute per client
+  (`clients/{id}.liveSnapshotAt`), and only while someone is looking, so nothing is sent on a schedule. When the
+  site can't be reached (tunnel down, PC off), the failed `live` call carries that copy as `lastKnown` and the
+  page shows it under a banner with the time it was seen. Not after a refused API key — that site is up and
+  needs fixing. The collection is closed to every browser; the page gets it only through the function.
 - **"Unreachable" means unreachable.** A gateway that answers, even with an error, counts as
   reached; only a network failure, or a tunnel that cannot reach the gateway behind it, marks a
   client unreachable in the client list.
@@ -79,6 +85,7 @@ Client gateway ──GET + X-License-Key──► licenseCheck (Cloud Function) 
   adminApiKey, licenseKey, tunnelToken, licenseExpiresAt, graceDays, suspended, lastLicenseCheckAt,
   lastAdminContactAt, lastContactStatus, recentEvents (last 20), and the tag file's summary
   (siteProfileVersion, siteProfileTagCount, siteProfileFileName, siteProfileUploadedAt).
+- `liveSnapshots/{clientId}` — the last `/live` answer the cloud saw (`json`, `savedAt`). Written and read only by `gatewayProxy`. No browser rule allows it.
 - `siteProfiles/{clientId}` — the client's tag file (`json`, `version`, `tagCount`, `fileName`). Written
   by `uploadSiteProfile`, read by `siteProfile` for that client's gateway. No browser rule allows it.
 - `admins/{uid}` — if this document exists, that login is a cloud admin. **Created by hand in the

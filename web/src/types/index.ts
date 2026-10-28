@@ -121,6 +121,9 @@ export interface GatewaySection2Cycle {
   cycleNumber: number;
   blastStart: string;
   blastEnd: string;
+  // How long the cycle ran, in seconds: recorded time only, so it can be less than
+  // end − start. Absent from a gateway older than 2026-10-28 (use end − start then).
+  durationSec?: number;
   metal1Name: string | null;
   metal2Name: string | null;
   metal3Name: string | null;
@@ -318,4 +321,9 @@ export type GatewayFailureReason =
 // "pending" | "processing" while it is still calculating, "error" if it failed.
 export type ProxyResult<T> =
   | { ok: true; data: T; trendBucket?: string }
-  | { ok: false; reason: GatewayFailureReason; status?: number; message?: string; requestStatus?: string };
+  | {
+      ok: false; reason: GatewayFailureReason; status?: number; message?: string; requestStatus?: string;
+      // On a failed live pull only: the last live answer the cloud saw for this client, and when.
+      // fetchLive normalises it into a GatewayLiveResponse.
+      lastKnown?: { savedAt: string; data: unknown };
+    };

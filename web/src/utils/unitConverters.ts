@@ -11,6 +11,17 @@ import { PLANT_LOCALE } from './plantLocale';
 const numberFormats = new Map<string, Intl.NumberFormat>();
 
 /** `n` with exactly `decimals` decimals, optionally with thousands separators. `—` when not a number. */
+/** A cycle's run time, to the second: "4 min 32 s", "1 h 02 min 05 s". */
+export function cycleRunTime(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '—';
+  const total = Math.round(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h} h ${pad(m)} min ${pad(s)} s` : `${m} min ${pad(s)} s`;
+}
+
 export function formatNumber(n: number | null | undefined, decimals: number, grouping = false): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   const key = `${decimals}|${grouping}`;

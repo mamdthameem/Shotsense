@@ -46,10 +46,20 @@ const proxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gate
 // the browser must wait longer than the SDK's 70s default before giving up.
 const filterProxy = httpsCallable<ProxyRequest, ProxyResult<unknown>>(functions, 'gatewayProxy', { timeout: 80_000 });
 
-/** One on-demand pull of the client's live snapshot — nothing is cached. */
+/**
+ * One on-demand pull of the client's live snapshot. When the gateway cannot be reached, the failure
+ * carries `lastKnown`: the last live answer the cloud saw for this client (saved by gatewayProxy at
+ * most once a minute while someone views the page), so the page can still show the last values.
+ */
 export async function fetchLive(clientId: string): Promise<ProxyResult<GatewayLiveResponse>> {
   const result = (await proxy({ clientId, view: 'live' })).data as ProxyResult<GatewayLiveResponse>;
-  return result.ok ? { ok: true, data: normalizeLive(result.data) } : result;
+  if (result.ok) return { ok: true, data: normalizeLive(result.data) };
+  return result.lastKnown
+    ? {
+        ...result,
+        lastKnown: { savedAt: result.lastKnown.savedAt, data: normalizeLive(result.lastKnown.data as GatewayLiveResponse) },
+      }
+    : result;
 }
 
 const TREND_BUCKETS: readonly string[] = ['hour', 'day', 'month'];

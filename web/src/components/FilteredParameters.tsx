@@ -11,7 +11,7 @@ import ItemProductionGraph from './ItemProductionGraph';
 import { FilteredAmpsPanel } from './AmpsPanel';
 import { formatPlantDateTime } from '../utils/formatters';
 import {
-  FILTERED_ORDER, formatNumber, formatParameterValue, paramLabel, parseValue,
+  FILTERED_ORDER, cycleRunTime, formatNumber, formatParameterValue, paramLabel, parseValue,
 } from '../utils/unitConverters';
 import { downloadXlsx, type Cell } from '../utils/xlsx';
 import type {
@@ -110,6 +110,12 @@ function ProductionByItem({ metals, total }: { metals: GatewaySection2Metal[]; t
   );
 }
 
+/** How long a cycle ran: the gateway's recorded run time, or end − start from an older gateway. */
+function cycleSeconds(c: GatewaySection2Cycle): number {
+  if (typeof c.durationSec === 'number') return c.durationSec;
+  return (new Date(c.blastEnd).getTime() - new Date(c.blastStart).getTime()) / 1000;
+}
+
 function CycleLog({ cycles }: { cycles: GatewaySection2Cycle[] }) {
   return (
     <Box>
@@ -127,6 +133,7 @@ function CycleLog({ cycles }: { cycles: GatewaySection2Cycle[] }) {
                 <TableCell sx={{ fontWeight: 700 }}>Cycle No.</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Start Time</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>End Time</TableCell>
+                <TableCell sx={{ fontWeight: 700 }} align="right">Ran for</TableCell>
                 {METAL_SLOTS.map(i => <TableCell key={i} sx={{ fontWeight: 700 }}>Item {i}</TableCell>)}
                 <TableCell sx={{ fontWeight: 700 }} align="right">Tonnage Produced (kg)</TableCell>
                 <TableCell sx={{ fontWeight: 700 }} align="right">Energy (kWh)</TableCell>
@@ -138,6 +145,7 @@ function CycleLog({ cycles }: { cycles: GatewaySection2Cycle[] }) {
                   <TableCell>{c.cycleNumber}</TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatPlantDateTime(c.blastStart)}</TableCell>
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatPlantDateTime(c.blastEnd)}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{cycleRunTime(cycleSeconds(c))}</TableCell>
                   {METAL_SLOTS.map(i => <TableCell key={i}>{itemCell(c, i)}</TableCell>)}
                   <TableCell align="right">{formatNumber(c.productionKg, 2)}</TableCell>
                   <TableCell align="right">{formatNumber(c.energyKwh, 3)}</TableCell>
@@ -154,7 +162,7 @@ function CycleLog({ cycles }: { cycles: GatewaySection2Cycle[] }) {
 /** The three-sheet workbook: Parameters, Item Production and Cycles. */
 function exportWorkbook(clientName: string, s: GatewaySection2, tiles: { label: string; value: string }[]) {
   const total = s.results.find(r => r.parameterName === 'production_qty_kg')?.value;
-  const cycleHeader: Cell[] = ['Cycle No.', 'Start Time', 'End Time'];
+  const cycleHeader: Cell[] = ['Cycle No.', 'Start Time', 'End Time', 'Ran for (min)'];
   for (const i of METAL_SLOTS) cycleHeader.push(`Item ${i}`, `Item ${i} (kg)`);
   cycleHeader.push('Tonnage Produced (kg)', 'Energy (kWh)');
 
@@ -174,7 +182,11 @@ function exportWorkbook(clientName: string, s: GatewaySection2, tiles: { label: 
         rows: [
           cycleHeader,
           ...s.cycles.map(c => {
-            const row: Cell[] = [c.cycleNumber, formatPlantDateTime(c.blastStart), formatPlantDateTime(c.blastEnd)];
+            const row: Cell[] = [
+              c.cycleNumber, formatPlantDateTime(c.blastStart), formatPlantDateTime(c.blastEnd),
+              // Minutes as a number, so the sheet can add the column up (it totals to Blast Time).
+              Math.round((cycleSeconds(c) / 60) * 100) / 100,
+            ];
             for (const i of METAL_SLOTS) {
               const weight = metalWeight(c, i);
               row.push(metalName(c, i) ?? (weight == null ? null : 'unspecified'), weight);

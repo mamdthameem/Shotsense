@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import { assertAdmin } from "./lib/admin";
@@ -65,9 +65,49 @@ type FailureReason =
 // trendBucket carries the gateway's X-Trend-Bucket response header (the bucket
 // it picked for bucket=auto) when it sends one. requestStatus carries the
 // "status" of a 409 from filter-result: "pending" | "processing" | "error".
+// lastKnown rides on a failed "live" only: the last /live answer the cloud saw (see SNAPSHOTS).
 type ProxyResult =
   | { ok: true; data: unknown; trendBucket?: string }
-  | { ok: false; reason: FailureReason; status?: number; message?: string; requestStatus?: string };
+  | {
+      ok: false; reason: FailureReason; status?: number; message?: string; requestStatus?: string;
+      lastKnown?: { savedAt: string; data: unknown };
+    };
+
+// The last /live answer the cloud saw for each client (decided 2026-10-28), so a site that cannot be
+// reached — tunnel down, the client's PC off — still shows its last values instead of nothing. Saved
+// only when an admin's page pulls /live successfully, at most once a minute per client (the clients/
+// doc's liveSnapshotAt says when), so it costs nothing while nobody is looking. One document per
+// client in liveSnapshots/{clientId}, closed to every browser (firestore.rules): the website gets it
+// only through this function, as `lastKnown` on a failed "live".
+const SNAPSHOTS = "liveSnapshots";
+const SNAPSHOT_MIN_INTERVAL_MS = 60_000;
+// Firestore's document limit is 1 MiB. A long refill history is the one part that grows, so it is
+// trimmed to its newest rows before giving up on a snapshot.
+const SNAPSHOT_MAX_CHARS = 900_000;
+const SNAPSHOT_SHOTS_KEEP = 200;
+
+function snapshotJson(data: unknown): string | null {
+  let json = JSON.stringify(data);
+  if (json.length <= SNAPSHOT_MAX_CHARS) return json;
+  const live = data as { shotsBreakdown?: unknown[] };
+  if (Array.isArray(live?.shotsBreakdown)) {
+    json = JSON.stringify({ ...live, shotsBreakdown: live.shotsBreakdown.slice(-SNAPSHOT_SHOTS_KEEP) });
+    if (json.length <= SNAPSHOT_MAX_CHARS) return json;
+  }
+  return null;
+}
+
+async function readSnapshot(clientId: string): Promise<{ savedAt: string; data: unknown } | null> {
+  try {
+    const doc = await getFirestore().collection(SNAPSHOTS).doc(clientId).get();
+    const saved = doc.data() as { json?: string; savedAt?: Timestamp } | undefined;
+    if (!saved?.json || !saved.savedAt) return null;
+    return { savedAt: saved.savedAt.toDate().toISOString(), data: JSON.parse(saved.json) };
+  } catch (err) {
+    logger.warn("live snapshot read failed", { clientId, err });
+    return null;
+  }
+}
 
 // "filter" gets a much longer budget than the others — a synchronous filtered
 // calculation can be slow, and CONTRACT-admin-api.md suggests 30–60s until it
@@ -100,8 +140,8 @@ const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const FRONT_PROXY_STATUSES = new Set([502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530]);
 
 /**
- * On-demand pass-through to one client's gateway API (never cached, never
- * stored): looks up the client's address + API key in the registry, calls
+ * On-demand pass-through to one client's gateway API (never cached — apart from
+ * the last /live answer, kept for when the site is down; see SNAPSHOTS): looks up the client's address + API key in the registry, calls
  * /api/admin/{live|trends|filter|filter/{id}|amps/by-cycle|filter/{id}/amps|settings/impellers|tags|settings/plc}
  * over HTTPS, and returns the JSON as-is. Any cloud admin may call it — every
  * admin has the same access, including the one write (set-impellers). Reachability problems come back as
@@ -158,13 +198,35 @@ export const gatewayProxy = onCall(
       }
       update.recentEvents = appendEvent(client.recentEvents, event);
     }
+
+    // Last known values (SNAPSHOTS): remember a successful /live, hand back the remembered one when
+    // the gateway cannot be reached. Best effort both ways — never fails the call.
+    let lastKnown: { savedAt: string; data: unknown } | null = null;
+    if (view === "live" && result.ok) {
+      const savedAt = client.liveSnapshotAt?.toMillis() ?? 0;
+      if (now.getTime() - savedAt >= SNAPSHOT_MIN_INTERVAL_MS) {
+        const json = snapshotJson(result.data);
+        if (json) {
+          try {
+            await getFirestore().collection(SNAPSHOTS).doc(clientId).set({ json, savedAt: Timestamp.fromDate(now) });
+            update.liveSnapshotAt = Timestamp.fromDate(now);
+          } catch (err) {
+            logger.warn("live snapshot write failed", { clientId, err });
+          }
+        }
+      }
+    } else if (view === "live" && !result.ok && result.reason !== "auth-failed") {
+      // Not after a refused key: a site that answers is reachable and must be fixed, not papered over.
+      lastKnown = await readSnapshot(clientId);
+    }
+
     try {
       await ref.update(update);
     } catch (err) {
       logger.warn("contact write failed", { clientId, err });
     }
 
-    return result;
+    return lastKnown && !result.ok ? { ...result, lastKnown } : result;
   }
 );
 
